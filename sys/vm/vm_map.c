@@ -1586,7 +1586,8 @@ vm_map_lookup_entry(
  */
 int
 vm_map_insert(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
-    vm_offset_t start, vm_offset_t end, vm_prot_t prot, vm_prot_t max, int cow)
+    vm_offset_t start, vm_offset_t end, vm_prot_t prot, vm_prot_t max, int cow,
+    vm_offset_t reservation)
 {
 	vm_map_entry_t new_entry, next_entry, prev_entry;
 	struct ucred *cred;
@@ -1707,7 +1708,8 @@ charged:
 		if (prev_entry->inheritance == inheritance &&
 		    prev_entry->protection == prot &&
 		    prev_entry->max_protection == max &&
-		    prev_entry->wired_count == 0) {
+		    prev_entry->wired_count == 0 &&
+		    prev_entry->reservation == reservation) {
 			KASSERT((prev_entry->eflags & MAP_ENTRY_USER_WIRED) ==
 			    0, ("prev_entry %p has incoherent wiring",
 			    prev_entry));
@@ -1745,6 +1747,7 @@ charged:
 	new_entry = vm_map_entry_create(map);
 	new_entry->start = start;
 	new_entry->end = end;
+	new_entry->reservation = reservation;
 	new_entry->cred = NULL;
 
 	new_entry->eflags = protoeflags;
@@ -1901,7 +1904,8 @@ vm_map_fixed(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
     vm_offset_t start, vm_size_t length, vm_prot_t prot,
     vm_prot_t max, int cow)
 {
-	vm_offset_t end;
+	vm_map_entry_t prev_entry;
+	vm_offset_t end, reservation;
 	int result;
 
 	end = start + length;
@@ -1910,14 +1914,19 @@ vm_map_fixed(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 	    ("vm_map_fixed: non-NULL backing object for stack"));
 	vm_map_lock(map);
 	VM_MAP_RANGE_CHECK(map, start, end);
-	if ((cow & MAP_CHECK_EXCL) == 0)
+	reservation = start;
+	if ((cow & MAP_CHECK_EXCL) == 0) {
+		if (vm_map_lookup_entry(map, start, &prev_entry) &&
+		    prev_entry->start <= start && prev_entry->end >= end)
+			reservation = prev_entry->reservation;
 		vm_map_delete(map, start, end);
+	}
 	if ((cow & (MAP_STACK_GROWS_DOWN | MAP_STACK_GROWS_UP)) != 0) {
 		result = vm_map_stack_locked(map, start, length, sgrowsiz,
 		    prot, max, cow);
 	} else {
 		result = vm_map_insert(map, object, offset, start, end,
-		    prot, max, cow);
+		    prot, max, cow, reservation);
 	}
 	vm_map_unlock(map);
 	return (result);
@@ -2166,7 +2175,7 @@ again:
 		    max, cow);
 	} else {
 		rv = vm_map_insert(map, object, offset, *addr, *addr + length,
-		    prot, max, cow);
+		    prot, max, cow, *addr);
 	}
 	if (rv == KERN_SUCCESS && update_anon)
 		map->anon_loc = *addr + length;
@@ -2230,7 +2239,8 @@ vm_map_mergeable_neighbors(vm_map_entry_t prev, vm_map_entry_t entry)
 	    prev->max_protection == entry->max_protection &&
 	    prev->inheritance == entry->inheritance &&
 	    prev->wired_count == entry->wired_count &&
-	    prev->cred == entry->cred);
+	    prev->cred == entry->cred &&
+	    prev->reservation == entry->reservation);
 }
 
 static void
@@ -4507,7 +4517,7 @@ vm_map_stack_locked(vm_map_t map, vm_offset_t addrbos, vm_size_t max_ssize,
 		gap_bot = top;
 		gap_top = addrbos + max_ssize;
 	}
-	rv = vm_map_insert(map, NULL, 0, bot, top, prot, max, cow);
+	rv = vm_map_insert(map, NULL, 0, bot, top, prot, max, cow, addrbos);
 	if (rv != KERN_SUCCESS)
 		return (rv);
 	new_entry = vm_map_entry_succ(prev_entry);
@@ -4523,7 +4533,7 @@ vm_map_stack_locked(vm_map_t map, vm_offset_t addrbos, vm_size_t max_ssize,
 		return (KERN_SUCCESS);
 	rv = vm_map_insert(map, NULL, 0, gap_bot, gap_top, VM_PROT_NONE,
 	    VM_PROT_NONE, MAP_CREATE_GUARD | (orient == MAP_STACK_GROWS_DOWN ?
-	    MAP_CREATE_STACK_GAP_DN : MAP_CREATE_STACK_GAP_UP));
+	    MAP_CREATE_STACK_GAP_DN : MAP_CREATE_STACK_GAP_UP), addrbos);
 	if (rv == KERN_SUCCESS) {
 		/*
 		 * Gap can never successfully handle a fault, so
@@ -4708,12 +4718,13 @@ retry:
 		rv = vm_map_insert(map, NULL, 0, grow_start,
 		    grow_start + grow_amount,
 		    stack_entry->protection, stack_entry->max_protection,
-		    MAP_STACK_GROWS_DOWN);
+		    MAP_STACK_GROWS_DOWN, stack_entry->reservation);
 		if (rv != KERN_SUCCESS) {
 			if (gap_deleted) {
 				rv1 = vm_map_insert(map, NULL, 0, gap_start,
 				    gap_end, VM_PROT_NONE, VM_PROT_NONE,
-				    MAP_CREATE_GUARD | MAP_CREATE_STACK_GAP_DN);
+				    MAP_CREATE_GUARD | MAP_CREATE_STACK_GAP_DN,
+				    stack_entry->reservation);
 				MPASS(rv1 == KERN_SUCCESS);
 			} else
 				vm_map_entry_resize(map, gap_entry,

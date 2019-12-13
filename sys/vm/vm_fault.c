@@ -794,6 +794,7 @@ RetryFault_oom:
 	}
 
 	MPASS((fs.entry->eflags & MAP_ENTRY_GUARD) == 0);
+	MPASS((fs.entry->eflags & MAP_ENTRY_UNMAPPED) == 0);
 
 	if (wired)
 		fault_type = prot | (fault_type & VM_PROT_COPY);

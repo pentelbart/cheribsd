@@ -318,10 +318,10 @@ fi
 [ ${include_metadata} = "if-modified" -a ${modified} = "yes" ] && include_metadata=yes
 if [ ${include_metadata} != "yes" ]; then
 	VERINFO="${VERSION}${svn}${git}${hg} ${i}"
-	VERSTR="${VERINFO}\\\\n"
+	VERSTR="${VERINFO}\\n"
 else
 	VERINFO="${VERSION} #${v}${svn}${git}${hg}: ${t}"
-	VERSTR="${VERINFO}\\\\n    ${u}@${h}:${d}\\\\n"
+	VERSTR="${VERINFO}\\n    ${u}@${h}:${d}\\n"
 fi
 
 vers_content_new=$(cat << EOF

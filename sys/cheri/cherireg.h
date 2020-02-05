@@ -108,6 +108,24 @@
 #define	CHERI_SEALCAP_USERSPACE_OFFSET	0x0
 
 /*
+ * Sealing capability for capability pairs returned by cosetup(2).
+ */
+#define	CHERI_SEALCAP_SWITCHER_PERMS	CHERI_PERMS_KERNEL_SEALCAP
+#define	CHERI_SEALCAP_SWITCHER_BASE	(CHERI_OTYPE_USER_MIN + 1)
+#define	CHERI_SEALCAP_SWITCHER_LENGTH	\
+    (CHERI_OTYPE_USER_MAX - CHERI_OTYPE_USER_MIN + 1)
+#define	CHERI_SEALCAP_SWITCHER_OFFSET	0x0
+
+/*
+ * Sealing capability for capabilities returned by coregister(2)/colookup(2).
+ */
+#define	CHERI_SEALCAP_SWITCHER2_PERMS	CHERI_PERMS_KERNEL_SEALCAP
+#define	CHERI_SEALCAP_SWITCHER2_BASE	(CHERI_OTYPE_USER_MIN + 1)
+#define	CHERI_SEALCAP_SWITCHER2_LENGTH	\
+    (CHERI_OTYPE_USER_MAX - CHERI_OTYPE_USER_MIN + 2)
+#define	CHERI_SEALCAP_SWITCHER2_OFFSET	0x0
+
+/*
  * Root sealing capability for kernel managed objects.
  */
 #define	CHERI_SEALCAP_KERNEL_PERMS	CHERI_PERMS_KERNEL_SEALCAP

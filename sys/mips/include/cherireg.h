@@ -246,66 +246,6 @@
 #define	CHERI_CAP_KERN_OFFSET		0x0
 
 /*
- * Definition for userspace "unprivileged" capability able to name the user
- * portion of the address space.
- */
-#define	CHERI_CAP_USER_CODE_PERMS	CHERI_PERMS_USERSPACE_CODE
-#define	CHERI_CAP_USER_CODE_BASE	VM_MINUSER_ADDRESS
-#define	CHERI_CAP_USER_CODE_LENGTH	(VM_MAXUSER_ADDRESS - VM_MINUSER_ADDRESS)
-#define	CHERI_CAP_USER_CODE_OFFSET	0x0
-
-#define	CHERI_CAP_USER_DATA_PERMS	CHERI_PERMS_USERSPACE_DATA
-#define	CHERI_CAP_USER_DATA_BASE	VM_MINUSER_ADDRESS
-#define	CHERI_CAP_USER_DATA_LENGTH	(VM_MAXUSER_ADDRESS - VM_MINUSER_ADDRESS)
-#define	CHERI_CAP_USER_DATA_OFFSET	0x0
-
-#define	CHERI_CAP_USER_MMAP_PERMS					\
-	(CHERI_PERMS_USERSPACE_DATA | CHERI_PERMS_USERSPACE_CODE |	\
-	CHERI_PERM_CHERIABI_VMMAP)
-/* Start at 256MB to avoid low PC values in sandboxes */
-#define	CHERI_CAP_USER_MMAP_BASE	(VM_MINUSER_ADDRESS + 0x10000000)
-#define	CHERI_CAP_USER_MMAP_LENGTH					\
-    (VM_MAXUSER_ADDRESS - CHERI_CAP_USER_MMAP_BASE)
-#define	CHERI_CAP_USER_MMAP_OFFSET	0x0
-
-/*
- * Root sealing capability for all userspace object capabilities.  This is
- * made available to userspace via a sysarch(2).
- */
-#define	CHERI_SEALCAP_USERSPACE_PERMS	CHERI_PERMS_USERSPACE_SEALCAP
-#define	CHERI_SEALCAP_USERSPACE_BASE	CHERI_OTYPE_USER_MIN
-#define	CHERI_SEALCAP_USERSPACE_LENGTH	\
-    (CHERI_OTYPE_USER_MAX - CHERI_OTYPE_USER_MIN + 1)
-#define	CHERI_SEALCAP_USERSPACE_OFFSET	0x0
-
-/*
- * Root sealing capability for kernel managed objects.
- */
-#define	CHERI_SEALCAP_KERNEL_PERMS	CHERI_PERMS_KERNEL_SEALCAP
-#define CHERI_SEALCAP_KERNEL_BASE	CHERI_OTYPE_KERN_MIN
-#define	CHERI_SEALCAP_KERNEL_LENGTH	\
-    (CHERI_OTYPE_KERN_MAX - CHERI_OTYPE_KERN_MIN + 1)
-#define	CHERI_SEALCAP_KERNEL_OFFSET	0x0
-
-/*
- * Sealing capability for capability pairs returned by cosetup(2).
- */
-#define	CHERI_SEALCAP_SWITCHER_PERMS	CHERI_PERMS_KERNEL_SEALCAP
-#define	CHERI_SEALCAP_SWITCHER_BASE	(CHERI_OTYPE_USER_MIN + 1)
-#define	CHERI_SEALCAP_SWITCHER_LENGTH	\
-    (CHERI_OTYPE_USER_MAX - CHERI_OTYPE_USER_MIN + 1)
-#define	CHERI_SEALCAP_SWITCHER_OFFSET	0x0
-
-/*
- * Sealing capability for capabilities returned by coregister(2)/colookup(2).
- */
-#define	CHERI_SEALCAP_SWITCHER2_PERMS	CHERI_PERMS_KERNEL_SEALCAP
-#define	CHERI_SEALCAP_SWITCHER2_BASE	(CHERI_OTYPE_USER_MIN + 1)
-#define	CHERI_SEALCAP_SWITCHER2_LENGTH	\
-    (CHERI_OTYPE_USER_MAX - CHERI_OTYPE_USER_MIN + 2)
-#define	CHERI_SEALCAP_SWITCHER2_OFFSET	0x0
-
-/*
  * A blend of hardware and software allocation of capability registers.
  * Ideally, this list wouldn't exist here, but be purely in the assembler.
  */

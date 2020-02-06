@@ -152,6 +152,7 @@ static int vm_map_stack_locked(vm_map_t map, vm_offset_t addrbos,
 static void vm_map_wire_entry_failure(vm_map_t map, vm_map_entry_t entry,
     vm_offset_t failed_addr);
 static vm_map_entry_t vm_map_entry_create(vm_map_t map);
+static inline vm_map_entry_t vm_map_entry_pred(vm_map_entry_t entry);
 
 #define	ENTRY_CHARGED(e) ((e)->cred != NULL || \
     ((e)->object.vm_object != NULL && (e)->object.vm_object->cred != NULL && \
@@ -427,18 +428,26 @@ SYSCTL_INT(_debug, OID_AUTO, coexecve_cleanup_margin_down, CTLFLAG_RWTUN,
     &coexecve_cleanup_margin_down, 0,
     "Maximum hole size for segments growing down when cleaning up after colocated processes");
 
+static bool
+vm_map_entry_abandoned(vm_map_entry_t entry)
+{
+	if (entry->object.vm_object == NULL &&
+	    entry->protection == PROT_NONE && entry->owner == 0)
+		return (true);
+
+	return (false);
+}
+
 static void
 vm_map_entry_abandon(vm_map_t map, vm_map_entry_t old_entry)
 {
-	vm_map_entry_t entry, next;
+	vm_map_entry_t entry, prev, next;
 	vm_offset_t start, end;
 	boolean_t found, grown_down;
 	int rv;
 
-#ifdef notyet
-	prev = entry->prev;
-#endif
 	next = vm_map_entry_succ(old_entry);
+	prev = vm_map_entry_pred(old_entry);
 	start = old_entry->start;
 	end = old_entry->end;
 	grown_down = old_entry->eflags & MAP_ENTRY_GROWS_DOWN;
@@ -466,18 +475,14 @@ vm_map_entry_abandon(vm_map_t map, vm_map_entry_t old_entry)
 	 * vm_map_try_merge_entries() can coalesce them.  Use much larger
 	 * threshold for stacks.
 	 */
-#ifdef notyet
-	if (prev != &map->header && prev->object.vm_object == NULL &&
-	    prev->protection == PROT_NONE && prev->owner == 0 &&
+	if (prev != &map->header && vm_map_entry_abandoned(prev) &&
 	    start > prev->end && start - prev->end <=
 	    ((grown_down != 0) ?
 	    coexecve_cleanup_margin_down : coexecve_cleanup_margin_up)) {
 		start = prev->end;
 	}
-#endif
 
-	if (next != &map->header && next->object.vm_object == NULL &&
-	    next->protection == PROT_NONE && next->owner == 0 &&
+	if (next != &map->header && vm_map_entry_abandoned(next) &&
 	    end < next->start && next->start - end <=
 	    (((next->eflags & MAP_ENTRY_GROWS_DOWN) != 0) ?
 	    coexecve_cleanup_margin_down : coexecve_cleanup_margin_up)) {
@@ -512,12 +517,11 @@ vm_map_entry_abandon(vm_map_t map, vm_map_entry_t old_entry)
 		entry->eflags |= MAP_ENTRY_GROWS_DOWN;
 	entry->owner = 0;
 
-#ifdef notyet
 	/*
 	 * We need to call it again after setting the owner to 0.
 	 */
 	vm_map_try_merge_entries(map, prev, entry);
-#endif
+	vm_map_try_merge_entries(map, entry, next);
 }
 
 void
@@ -2412,16 +2416,10 @@ static bool
 vm_map_mergeable_neighbors(vm_map_entry_t prev, vm_map_entry_t entry)
 {
 
-#ifdef notyet
 	KASSERT((prev->eflags & MAP_ENTRY_NOMERGE_MASK) == 0 ||
 	    (entry->eflags & MAP_ENTRY_NOMERGE_MASK) == 0,
 	    ("vm_map_mergeable_neighbors: neither %p nor %p are mergeable",
 	    prev, entry));
-#else
-	if ((prev->eflags & MAP_ENTRY_NOMERGE_MASK) != 0 &&
-	    (entry->eflags & MAP_ENTRY_NOMERGE_MASK) != 0)
-		return (false);
-#endif
 	return (prev->end == entry->start &&
 	    prev->object.vm_object == entry->object.vm_object &&
 	    (prev->object.vm_object == NULL ||
@@ -2472,15 +2470,17 @@ vm_map_try_merge_entries(vm_map_t map, vm_map_entry_t prev_entry,
 
 	VM_MAP_ASSERT_LOCKED(map);
 
-	if ((entry->eflags & (MAP_ENTRY_GROWS_UP |
-	    MAP_ENTRY_IN_TRANSITION | MAP_ENTRY_IS_SUB_MAP)) != 0)
+	/*
+	 * Try to merge abandoned stacks.
+	 */
+	if ((entry->eflags & MAP_ENTRY_GROWS_DOWN) &&
+	    vm_map_entry_abandoned(entry) &&
+	    vm_map_entry_abandoned(prev_entry) &&
+	    prev_entry->end == entry->start) {
+		vm_map_entry_unlink(map, prev_entry, UNLINK_MERGE_NEXT);
+		vm_map_merged_neighbor_dispose(map, prev_entry);
 		return;
-
-	if ((entry->eflags & MAP_ENTRY_GROWS_DOWN) != 0 &&
-           (entry->object.vm_object != NULL ||
-	    entry->protection != PROT_NONE ||
-	    entry->owner != 0))
-		return;
+	}
 
 	if ((entry->eflags & MAP_ENTRY_NOMERGE_MASK) == 0 &&
 	    vm_map_mergeable_neighbors(prev_entry, entry)) {
@@ -4931,8 +4931,8 @@ retry:
 	 * If this is the main process stack, see if we're over the stack
 	 * limit.
 	 */
-	is_procstack = (addr >= (vm_offset_t)vm->vm_maxsaddr &&
-	    addr < p->p_usrstack) ? 1 : 0;
+	is_procstack = addr >= (vm_offset_t)vm->vm_maxsaddr &&
+	    addr < p->p_usrstack;
 	if (is_procstack && (ctob(vm->vm_ssize) + grow_amount > stacklim))
 		return (KERN_NO_SPACE);
 

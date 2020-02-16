@@ -157,6 +157,7 @@ colocation_get_peer(struct thread *td, struct thread **peertdp)
 void
 colocation_thread_exit(struct thread *td)
 {
+	
 	struct switchercb scb, *peerscb;
 	vaddr_t addr;
 	bool have_scb;
@@ -179,15 +180,6 @@ colocation_thread_exit(struct thread *td)
 	scb.scb_borrower_td = NULL;
 
 	addr = td->td_md.md_scb;
-
-	vm_map_lock(&vmspace->vm_map);
-	LIST_FOREACH(con, &vmspace->vm_conames, c_next) {
-		if (addr==con->c_value) {
-			LIST_REMOVE(con,c_next);
-		}
-	}
-	vm_map_unlock(&vmspace->vm_map);
-	
 	td->td_md.md_scb = 0;
 	error = copyoutcap(&scb, ___USER_CFROMPTR((void *)addr, userspace_cap), sizeof(scb));
 	if (error != 0) {
@@ -439,6 +431,7 @@ kern_coregister(struct thread *td, const char * __capability namep,
 	struct coname *con;
 	char name[PATH_MAX];
 	void * __capability cap;
+	struct switchercb * __capability existing_scb_cap;
 	vaddr_t addr;
 	int error;
 
@@ -465,8 +458,18 @@ kern_coregister(struct thread *td, const char * __capability namep,
 	vm_map_lock(&vmspace->vm_map);
 	LIST_FOREACH(con, &vmspace->vm_conames, c_next) {
 		if (strcmp(name, con->c_name) == 0) {
-			vm_map_unlock(&vmspace->vm_map);
-			return (EEXIST);
+			existing_scb_cap=cheri_unseal(con->c_value,switcher_sealcap2);
+			if(existing_scb_cap->scb_td==NULL)
+			{
+				LIST_REMOVE(con,c_next);
+				vm_map_unlock(&vmspace->vm_map);
+			}
+			else
+			{
+				vm_map_unlock(&vmspace->vm_map);
+				return (EEXIST);
+			}
+			
 		}
 	}
 

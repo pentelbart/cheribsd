@@ -428,7 +428,7 @@ kern_coregister(struct thread *td, const char * __capability namep,
     void * __capability * __capability capp)
 {
 	struct vmspace *vmspace;
-	struct coname *con;
+	struct coname *con,*con_temp;
 	char name[PATH_MAX];
 	void * __capability cap;
 	struct switchercb * __capability existing_scb_cap;
@@ -456,13 +456,14 @@ kern_coregister(struct thread *td, const char * __capability namep,
 	addr = td->td_md.md_scb;
 
 	vm_map_lock(&vmspace->vm_map);
-	LIST_FOREACH(con, &vmspace->vm_conames, c_next) {
+	LIST_FOREACH_SAFE(con, &vmspace->vm_conames, c_next, con_temp) {
 		if (strcmp(name, con->c_name) == 0) {
 			existing_scb_cap=cheri_unseal(con->c_value,switcher_sealcap2);
 			if(existing_scb_cap->scb_td==NULL)
 			{
 				LIST_REMOVE(con,c_next);
 				vm_map_unlock(&vmspace->vm_map);
+				break;
 			}
 			else
 			{

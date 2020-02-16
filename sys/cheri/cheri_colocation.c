@@ -157,8 +157,6 @@ colocation_get_peer(struct thread *td, struct thread **peertdp)
 void
 colocation_thread_exit(struct thread *td)
 {
-	struct vmspace *vmspace;
-	struct coname *con;
 	struct switchercb scb, *peerscb;
 	vaddr_t addr;
 	bool have_scb;
@@ -181,7 +179,6 @@ colocation_thread_exit(struct thread *td)
 	scb.scb_borrower_td = NULL;
 
 	addr = td->td_md.md_scb;
-	vmspace = td->td_proc->p_vmspace;
 
 	vm_map_lock(&vmspace->vm_map);
 	LIST_FOREACH(con, &vmspace->vm_conames, c_next) {

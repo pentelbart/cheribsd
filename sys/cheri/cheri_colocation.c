@@ -179,6 +179,15 @@ colocation_thread_exit(struct thread *td)
 	scb.scb_borrower_td = NULL;
 
 	addr = td->td_md.md_scb;
+
+	vm_map_lock(&vmspace->vm_map);
+	LIST_FOREACH(con, &vmspace->vm_conames, c_next) {
+		if (addr==con->c_value) {
+			LIST_REMOVE(con,c_next);
+		}
+	}
+	vm_map_unlock(&vmspace->vm_map);
+	
 	td->td_md.md_scb = 0;
 	error = copyoutcap(&scb, ___USER_CFROMPTR((void *)addr, userspace_cap), sizeof(scb));
 	if (error != 0) {

@@ -462,7 +462,6 @@ kern_coregister(struct thread *td, const char * __capability namep,
 			if(existing_scb_cap->scb_td==NULL)
 			{
 				LIST_REMOVE(con,c_next);
-				break;
 			}
 			else
 			{

@@ -19,10 +19,12 @@ SUBDIR=	alias \
 	chpass \
 	cksum \
 	cmp \
+	cochatter \
 	coexec \
 	col \
 	colrm \
 	column \
+	comesg_ukernel \
 	comm \
 	compress \
 	coping \

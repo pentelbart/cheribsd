@@ -24,6 +24,7 @@
 
 #ifdef __CHERI_PURE_CAPABILITY__
 #include <cheri/cheric.h>
+#include <cheri/cherireg.h>
 #endif
 
 #ifdef JEMALLOC_SYSCTL_VM_OVERCOMMIT

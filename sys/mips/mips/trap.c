@@ -1153,12 +1153,14 @@ dofault:
 		break;
 
 	case T_C2E + T_USER:
+		/*
 		if (colocation_trap_in_switcher(td, trapframe)) {
 			printf("%s: switcher trap at pc %#jx\n",
 			    __func__, (intmax_t)TRAPF_PC(trapframe));
 			TRAPF_PC_INCREMENT(trapframe, sizeof(int));
 			goto out;
 		}
+		*/
 		msg = "USER_CHERI_EXCEPTION";
 #ifdef KTRACE
 		if (KTRPOINT(td, KTR_CEXCEPTION))

@@ -224,12 +224,24 @@ _C_LABEL(switcher_cocall):
 	bgez	t8, 2f
 	nop
 	daddiu	t0, a0, 0
+	beq	t0, t0, 2f
+	nop
 
+	/* Assume alignment as the function claims to require it */
+3:
+	csc	$c14, t0, 0($c7)
+	beqz	t0, 4f
 2:
 	daddi	t0, -8
 	cld	t1, t0, 0($c6)
+	daddi	t0, -8
+	cld	t3, t0, 0($c6)
+	clc	$c14, t0, 0($c6)
+	cbts	$c14, 3b
 	csd	t1, t0, 0($c7)
+	csd	t3, t0, 0($c7)
 	bgtz	t0, 2b
+4:
 	nop
 
 	clearlo		CLEARLO_BITS

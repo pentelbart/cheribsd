@@ -237,7 +237,8 @@ colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 	KASSERT(peertd != td,
 	    ("%s: peertd %p == td %p\n", __func__, peertd, td));
 
-#if 0
+#if 1
+	printf("syscall is %s\n",syscallname(td->td_proc,td->td_sa.code));
 	printf("%s: replacing current td %p, switchercb %#lx, md_tls %p, md_tls_tcb_offset %zd, "
 	    "with td %p, switchercb %#lx, md_tls %p, md_tls_tcb_offset %zd\n", __func__,
 	    td, td->td_md.md_scb, (__cheri_fromcap void *)td->td_md.md_tls, td->td_md.md_tls_tcb_offset,

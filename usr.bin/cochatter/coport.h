@@ -23,6 +23,8 @@
 				can obtain a read-only capability. sender loses write capability
 				to the sent message
 	COPIPE	  -	synchronous message passing ipc. as yet unimplemented.
+				might be a blocking one with no buffer using call into ukern
+				on both sides to copy straight from dest to source	
 */
 
 typedef enum {COCHANNEL, COCARRIER, COPIPE} coport_type_t;
@@ -38,7 +40,7 @@ typedef enum {COCHANNEL, COCARRIER, COPIPE} coport_type_t;
  */
 typedef struct _coport_t
 {
-	void * buffer;
+	void * __capability buffer;
 	u_int length;
 	u_int start;
 	u_int end;

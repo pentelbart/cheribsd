@@ -11,6 +11,7 @@
 #include "coport_utils.h"
 #include "coproc.h"
 #include "sys_comsg.h"
+#include "ukern_mman.h"
 
 
 #define DEBUG
@@ -157,7 +158,7 @@ void *coport_open(void *args)
 	worker_args_t * data = args;
 	cocall_coopen_t * coport_args;
 	coport_tbl_entry_t table_entry;
-	coport_t port,*prt;
+	coport_t port, *prt;
 
 
 	char port_name[COPORT_NAME_LEN];
@@ -169,24 +170,29 @@ void *coport_open(void *args)
 	void * __capability target;
 
 	coport_args=malloc(sizeof(cocall_coopen_t));
-	memset(coport_args,0,sizeof(cocall_coopen_t));
 
 	error=coaccept_init(&sw_code,&sw_data,data->name,&target);
 	data->cap=target;
 	update_worker_args(data,U_COOPEN);
 	for (;;)
 	{
-		error=coaccept(sw_code,sw_data,&caller_cookie,coport_args,sizeof(coport_args));
+		error=coaccept(sw_code,sw_data,&caller_cookie,coport_args,sizeof(cocall_coopen_t));
+		printf("coopening...\n");
 		/* check args are acceptable */
 		strcpy(port_name,coport_args->args.name);
+		printf("coport name:%s", port_name);
 		/* check if port exists */
 		lookup=lookup_port(port_name,&prt);
 		if(lookup==1)
 		{
 			/* if it doesn't, set up coport */
+			printf("reading type...\n");
 			type=coport_args->args.type;
+			printf("type read:%u\n",type);
+			printf("initing port...\n");
 			error=init_port(type,&port);
-			table_entry.port=port;
+			printf("inited port.\n");
+			memcpy(&table_entry.port,&port,sizeof(port));
 			table_entry.id=generate_id();
 			strcpy(table_entry.name,port_name);
 			index=add_port(&table_entry);
@@ -196,7 +202,7 @@ void *coport_open(void *args)
 			}
 			prt=&coport_table.table[index].port;
 		}
-		coport_args->port=prt;
+		coport_args->port=*prt;
 	}
 	free(coport_args);
 	return 0;
@@ -469,6 +475,8 @@ int main(int argc, const char *argv[])
 	int verbose;
 	int error;
 	request_handler_args_t * handler_args;
+
+	pthread_t memory_manager;
 	pthread_t coopen_threads[WORKER_COUNT];
 	pthread_t counlock_threads[WORKER_COUNT];
 	pthread_t comutex_init_threads[WORKER_COUNT];
@@ -509,6 +517,10 @@ int main(int argc, const char *argv[])
 		err(1,"Table setup failed!!");
 	}
 	printf("Table setup complete.\n");
+
+	printf("Starting memory manager...\n");
+	pthread_attr_init(&thread_attrs);
+	pthread_create(&memory_manager,&thread_attrs,ukern_mman,NULL);
 
 	/* perform setup */
 	printf("Spawning co-open listeners...\n");

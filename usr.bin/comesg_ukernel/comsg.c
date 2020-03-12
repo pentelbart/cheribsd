@@ -59,7 +59,6 @@ int cosend(coport_t * port, const void * buf, size_t len)
 	coport_status_t status_val;
 	_Atomic(void *) msg_cap;
 	void ** dest_buf;
-	unsigned int used_space;
 	//struct timespec start, end;
 	
 	switch(port->type)
@@ -74,9 +73,7 @@ int cosend(coport_t * port, const void * buf, size_t len)
 				}
 			}
 			atomic_thread_fence(memory_order_acquire);
-			used_space = (port->end-port->start)%port->length;
-			//doesn't do circularity properly
-			if((port->length-used_space)<len)
+			if((port->length-((port->end-port->start)%port->length))<len)
 			{
 				err(1,"message too big/buffer is full");
 			}

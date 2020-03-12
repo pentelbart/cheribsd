@@ -186,14 +186,18 @@ void *coport_open(void *args)
 	for (;;)
 	{
 		error=coaccept(sw_code,sw_data,&caller_cookie,coport_args,sizeof(cocall_coopen_t));
+		atomic_thread_fence(memory_order_acquire);
 		//printf("coopening...\n");
 		/* check args are acceptable */
 		strcpy(port_name,coport_args->args.name);
 		//printf("coport name:%s\n", coport_args->args.name);
 		/* check if port exists */
+		/* if it doesn't, we need to be sure we don't get into a race to create it */
+		pthread_mutex_lock(&coport_table.lock);
 		lookup=lookup_port(coport_args->args.name,&prt);
 		if(lookup==1)
 		{
+			
 			/* if it doesn't, set up coport */
 			//printf("type read:%u\n",coport_args->args.type);
 			//printf("initing port...\n");
@@ -211,6 +215,7 @@ void *coport_open(void *args)
 			//printf("buffer_perms: %lx\n",cheri_getperm(port->buffer));
 			prt=cheri_csetbounds(&coport_table.table[index].port,sizeof(coport_t));
 		}
+		pthread_mutex_unlock(&coport_table.lock);
 		coport_args->port=prt;
 		atomic_thread_fence(memory_order_release);
 	}
@@ -264,6 +269,7 @@ void *comutex_setup(void *args)
 		/* check args are acceptable */
 
 		/* check if mutex exists */
+		pthread_mutex_lock(&comutex_table.lock);
 		lookup=lookup_mutex(comutex_args.args.name,&mtx);
 		if(lookup==1)
 		{
@@ -278,6 +284,7 @@ void *comutex_setup(void *args)
 				err(1,"unable to init_port");
 			}
 		}
+		pthread_mutex_unlock(&comutex_table.lock);
 		strcpy(comutex_args.mutex->name,mtx->name);
 		comutex_args.mutex->mtx=mtx->user_mtx;
 		comutex_args.mutex->key=NULL;
@@ -441,7 +448,10 @@ int coaccept_init(
 
 int coport_tbl_setup(void)
 {
-	int error=pthread_mutex_init(&coport_table.lock,0);
+	pthread_mutexattr_t lock_attr;
+	pthread_mutexattr_init(&lock_attr);
+	pthread_mutexattr_settype(&lock_attr,PTHREAD_MUTEX_RECURSIVE);
+	int error=pthread_mutex_init(&coport_table.lock,&lock_attr);
 	coport_table.index=0;
 	coport_table.table=ukern_malloc(COPORT_TBL_LEN);
 	mlock(coport_table.table,COPORT_TBL_LEN);
@@ -452,7 +462,10 @@ int coport_tbl_setup(void)
 }
 int comutex_tbl_setup(void)
 {
-	int error=pthread_mutex_init(&comutex_table.lock,0);
+	pthread_mutexattr_t lock_attr;
+	pthread_mutexattr_init(&lock_attr);
+	pthread_mutexattr_settype(&lock_attr,PTHREAD_MUTEX_RECURSIVE);
+	int error=pthread_mutex_init(&comutex_table.lock,&lock_attr);
 	comutex_table.index=0;
 	comutex_table.table=ukern_malloc(COMTX_TBL_LEN);
 	mlock(comutex_table.table,COMTX_TBL_LEN);

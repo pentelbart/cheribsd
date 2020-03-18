@@ -433,15 +433,15 @@ int coaccept_init(
 	{
 		err(1,"ERROR: Could not cosetup.\n");
 	}
-	printf("Attempting to coregister with name %s\n",target_name);
+	//printf("Attempting to coregister with name %s\n",target_name);
 
 	error=coregister(target_name,target_cap);
 	if (error!=0)
 	{
 		err(1,"ERROR: Could not coregister with name %s.\n",target_name);
 	}
-	printf("Successfully coregistered with name %s\n",target_name);
-	printf("validity: %u\n",cheri_gettag(*target_cap));
+	//printf("Successfully coregistered with name %s\n",target_name);
+	//printf("validity: %u\n",cheri_gettag(*target_cap));
 
 	return 0;
 }

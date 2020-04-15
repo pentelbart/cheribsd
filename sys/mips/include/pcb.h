@@ -192,6 +192,7 @@ struct pcb
 	void *pcb_onfault;		/* for copyin/copyout faults */
 	trapf_pc_t pcb_tpc;
 #ifdef CPU_CHERI
+	trapf_pc_t orig_pcb_tpc; /* Saved copy of the original pcb_tpc */
 	struct cheri_signal pcb_cherisignal;	/* CHERI signal-related state. */
 	struct cheri_kframe pcb_cherikframe;	/* kernel caller-save state. */
 #endif

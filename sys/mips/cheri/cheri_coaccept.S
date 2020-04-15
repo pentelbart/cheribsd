@@ -207,7 +207,7 @@ _C_LABEL(switcher_coaccept):
 	bgez	t8, 2f
 	nop
 	daddiu	t0, a0, 0
-	nop
+	
 
 2:
 	daddi	t0, -8
@@ -218,11 +218,12 @@ _C_LABEL(switcher_coaccept):
 	csd t1, t0, 0($c7)
 	clc	$c16, t0, 0($c6)
 	cbtu	$c16, 3f
+	nop
 	csc	$c16, t0, 0($c7)
 3:
 	bgtz	t0, 2b
-4:
 	nop
+
 
 	/*
 	 * Zero out the scb_peer_scb variables, releasing the spinlock.

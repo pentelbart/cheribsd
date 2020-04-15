@@ -195,6 +195,7 @@ colocation_thread_exit(struct thread *td)
 	COLOCATION_DEBUG("terminating thread %p, scb %p, peer scb %p",
 	    td, (void *)td->td_md.md_scb, peerscb);
 
+
 	/*
 	 * Set scb_peer_scb to a special "null" capability, so that cocall(2)
 	 * can see the callee thread is dead.
@@ -239,12 +240,12 @@ colocation_thread_exit(struct thread *td)
 void
 colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 {
-	struct switchercb scb;
+	struct switchercb scb, peerscb;
 	struct thread *peertd;
 	struct trapframe peertrapframe;
 	struct syscall_args peersa;
 	trapf_pc_t peertpc;
-	bool have_scb;
+	bool have_scb, have_peer_scb;
 
 	have_scb = colocation_fetch_scb(td, &scb);
 	if (!have_scb)
@@ -264,7 +265,7 @@ colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 	if (scb.scb_peer_scb == NULL)
 	{
 		//allow swap-backs after cocall has returned
-		if(peerscb.scb_borrower_td!=td && peerscb.scb_borrower_td!=NULL)
+		if(peerscb.scb_borrower_td != td && cheri_getaddress(peerscb.scb_peer_scb) != td->td_md.md_scb)
 		{
 			scb.scb_borrower_td = NULL;
 			return;
@@ -394,7 +395,8 @@ setup_scb(struct thread *td)
 	 * Stuff neccessary for cocall_slow(2)/coaccept_slow(2).
 	 */
 	cv_init(&td->td_md.md_slow_cv, "slowcv");
-	sx_init(&td->td_md.md_slow_lock, "slowlock");
+	if (!lock_initialized(&td->td_md.md_slow_lock.lock_object))
+		sx_init(&td->td_md.md_slow_lock, "slowlock");
 	td->td_md.md_slow_caller_td = NULL;
 	td->td_md.md_slow_buf = NULL;
 	td->td_md.md_slow_len = 0;
@@ -476,8 +478,9 @@ kern_coregister(struct thread *td, const char * __capability namep,
     void * __capability * __capability capp)
 {
 	struct vmspace *vmspace;
-	struct coname *con;
+	struct coname *con,*con_temp;
 	char name[PATH_MAX];
+	struct switchercb * __capability existing_scb;
 	void * __capability cap;
 	vaddr_t addr;
 	int error;
@@ -503,10 +506,18 @@ kern_coregister(struct thread *td, const char * __capability namep,
 	addr = td->td_md.md_scb;
 
 	vm_map_lock(&vmspace->vm_map);
-	LIST_FOREACH(con, &vmspace->vm_conames, c_next) {
+	LIST_FOREACH_SAFE(con, &vmspace->vm_conames, c_next, con_temp) {
 		if (strcmp(name, con->c_name) == 0) {
-			vm_map_unlock(&vmspace->vm_map);
-			return (EEXIST);
+			existing_scb=cheri_unseal(con->c_value,switcher_sealcap2);
+			if(existing_scb->scb_td == NULL) {
+				LIST_REMOVE(con, c_next);
+				free(con, M_TEMP);
+				break;
+			}
+			else {
+				vm_map_unlock(&vmspace->vm_map);
+				return (EEXIST);
+			}
 		}
 	}
 

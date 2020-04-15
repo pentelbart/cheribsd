@@ -19,12 +19,10 @@ SUBDIR=	alias \
 	chpass \
 	cksum \
 	cmp \
-	cochatter \
 	coexec \
 	col \
 	colrm \
 	column \
-	comesg_ukernel \
 	comm \
 	compress \
 	coping \
@@ -200,7 +198,10 @@ SUBDIR=	alias \
 .if ${MACHINE_ARCH:Mmips64*}
 SUBDIR+=	beri_count_stats
 .endif
-
+.if ${MACHINE_ABI:Mpurecap}
+SUBDIR+=comesg_ukernel
+SUBDIR+=cochatter
+.endif
 # NB: keep these sorted by MK_* knobs
 
 SUBDIR.${MK_AT}+=	at

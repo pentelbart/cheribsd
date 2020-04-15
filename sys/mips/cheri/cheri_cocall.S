@@ -156,6 +156,7 @@ _C_LABEL(switcher_cocall):
 	nop
 	cscc	t8, $idc, $c25
 	beq	t8, zero, 1b
+	nop
 	/* no branch delay slot needed */
 
 	/*
@@ -209,8 +210,6 @@ _C_LABEL(switcher_cocall):
 	bgez	t8, 2f
 	nop
 	daddiu	t0, a0, 0
-	beq	t0, t0, 2f
-	nop
 
 	/* Assume alignment as the function claims to require it */
 2:
@@ -222,10 +221,10 @@ _C_LABEL(switcher_cocall):
 	csd t1, t0, 0($c7)
 	clc	$c16, t0, 0($c6)
 	cbtu	$c16, 3f
+	nop
 	csc	$c16, t0, 0($c7)
 3:
 	bgtz	t0, 2b
-4:
 	nop
 
 	clearlo		CLEARLO_BITS

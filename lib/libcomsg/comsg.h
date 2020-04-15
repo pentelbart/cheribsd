@@ -41,7 +41,7 @@ int corecv(const coport_t p, void ** buf, size_t len);
 int coclose(coport_t port);
 
 int copoll(pollcoport_t * coports, int ncoports, int timeout);
-pollcoport_t make_pollcoport(coport_t port, coport_eventmask_t events);
+pollcoport_t make_pollcoport(coport_t port, int events);
 coport_type_t coport_gettype(coport_t port);
 
 #if 0

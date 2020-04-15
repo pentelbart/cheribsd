@@ -199,6 +199,7 @@ SUBDIR=	alias \
 SUBDIR+=	beri_count_stats
 .endif
 .if ${MACHINE_ABI:Mpurecap}
+SUBDIR+=ipc
 SUBDIR+=comesg_ukernel
 SUBDIR+=cochatter
 .endif

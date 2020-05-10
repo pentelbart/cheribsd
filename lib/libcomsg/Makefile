@@ -23,6 +23,8 @@ SHLIB_MAJOR=	1
 
 .if !defined(NEED_CHERI)
 NEED_CHERI=	pure
+.endif
+
 
 .include "../Makefile.inc"
 .include <bsd.lib.mk>

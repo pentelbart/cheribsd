@@ -1,3 +1,5 @@
+.include <src.opts.mk>
+
 LIB=	comsg
 
 SRCS=	libcomsg.c		\
@@ -25,6 +27,4 @@ SHLIB_MAJOR=	1
 NEED_CHERI=	pure
 .endif
 
-
-.include "../Makefile.inc"
 .include <bsd.lib.mk>

@@ -44,7 +44,6 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libcam \
 	libcapsicum \
 	libcasper \
-	libcomsg \
 	libcompat \
 	libcrypt \
 	libdevctl \
@@ -267,6 +266,7 @@ SUBDIR:=	${SUBDIR:Nlibc++experimental}
 
 .if ${MACHINE_ABI:Mpurecap}
 SUBDIR+=	libmalloc_simple
+SUBDIR+=	libcomsg
 .endif
 .if ${MK_LIBCHERI} == "yes"
 SUBDIR.${MK_LIBCHERI}+=	libcheri_syscalls

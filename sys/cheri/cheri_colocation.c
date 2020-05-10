@@ -238,7 +238,13 @@ colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 	    ("%s: peertd %p == td %p\n", __func__, peertd, td));
 
 #if 1
+	printf("in switcher:%d\n",colocation_trap_in_switcher(td,*trapframep));
+	printf("    scb_peer_scb:	%p\n", (__cheri_fromcap void *)scb.scb_peer_scb);
+	printf("    scb_td:		%p\n", scb.scb_td);
+	printf("    scb_borrower_td:	%p\n", scb.scb_borrower_td);
+	printf("    scb_unsealcap:	%p\n", (__cheri_fromcap void *)scb.scb_unsealcap);
 	printf("syscall is %s\n",syscallname(td->td_proc,td->td_sa.code));
+
 	printf("%s: replacing current td %p, switchercb %#lx, md_tls %p, md_tls_tcb_offset %zd, "
 	    "with td %p, switchercb %#lx, md_tls %p, md_tls_tcb_offset %zd\n", __func__,
 	    td, td->td_md.md_scb, (__cheri_fromcap void *)td->td_md.md_tls, td->td_md.md_tls_tcb_offset,
@@ -289,7 +295,6 @@ colocation_trap_in_switcher(struct thread *td, struct trapframe *trapframe)
 
 	sv = td->td_proc->p_sysent;
 	addr = (__cheri_addr vaddr_t)trapframe->pc;
-
 	if (addr >= sv->sv_cocall_base && addr < sv->sv_cocall_base + sv->sv_cocall_len)
 		return (true);
 	if (addr >= sv->sv_coaccept_base && addr < sv->sv_coaccept_base + sv->sv_coaccept_len)

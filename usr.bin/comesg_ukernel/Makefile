@@ -2,7 +2,7 @@
 
 PROG =	comesg_ukernel
 SRCS=	comesg_kern.c sys_comutex.c coport_utils.c ukern_mman.c
-CFLAGS+=-fPIE -pie -fuse-ld=lld -Wno-error=pointer-arith
+CFLAGS+=-fPIE -pie -fuse-ld=lld -Wno-error=pointer-arith -lcomsg
 LIBADD=	pthread
 NEED_CHERI=	pure
 MK_CHERI_SHARED_PROG:=yes

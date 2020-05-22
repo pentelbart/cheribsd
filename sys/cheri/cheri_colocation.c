@@ -193,6 +193,8 @@ colocation_thread_exit(struct thread *td)
 	{
 		if (peertd == NULL)
 			return;
+		else
+			peerscb=peertd->td_md.md_scb;
 	}
 
 
@@ -222,7 +224,6 @@ colocation_thread_exit(struct thread *td)
 void
 colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 {
-	vm_map_t map;
 	struct switchercb scb;
 	struct thread *peertd;
 	struct trapframe peertrapframe;

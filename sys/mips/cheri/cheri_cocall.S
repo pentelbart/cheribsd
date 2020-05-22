@@ -160,7 +160,7 @@ _C_LABEL(switcher_cocall):
 	/* no branch delay slot needed */
 
 	/*
-	 * Save the capability to the callee's thread in the caller context.
+	 * Save the integer pointer to the callee's thread in the caller context.
 	 * This is used by kernel to look up the real thread.  Also clear
 	 * the same field on the callee side.
 	 */

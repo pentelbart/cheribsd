@@ -157,7 +157,7 @@ colocation_get_peer(struct thread *td, struct thread **peertdp)
 void
 colocation_thread_exit(struct thread *td)
 {
-	
+	struct thread *peertd;
 	struct switchercb scb, *peerscb;
 	vaddr_t addr;
 	bool have_scb;
@@ -177,6 +177,7 @@ colocation_thread_exit(struct thread *td)
 	 */
 	scb.scb_peer_scb = cheri_capability_build_user_rwx(0, 0, 0, 0);
 	scb.scb_td = NULL;
+	peertd=scb_borrower_td;
 	scb.scb_borrower_td = NULL;
 
 	addr = td->td_md.md_scb;
@@ -188,8 +189,12 @@ colocation_thread_exit(struct thread *td)
 		return;
 	}
 
-	if (peerscb == NULL)
-		return;
+	if (peerscb == NULL )
+	{
+		if (peertd == NULL)
+			return;
+	}
+
 
 	error = copyincap(___USER_CFROMPTR((void *)peerscb, userspace_cap), &scb, sizeof(scb));
 	if (error != 0) {
@@ -198,8 +203,10 @@ colocation_thread_exit(struct thread *td)
 		return;
 	}
 
-	scb.scb_peer_scb = NULL;
-	scb.scb_borrower_td = NULL;
+	if (cheri_getbase(scb.scb_peer_scb)==addr)
+		scb.scb_peer_scb = NULL;
+	if (scb.scb_borrower_td==peertd)
+		scb.scb_borrower_td = NULL;
 
 	error = copyoutcap(&scb, ___USER_CFROMPTR((void *)peerscb, userspace_cap), sizeof(scb));
 	if (error != 0) {
@@ -215,6 +222,7 @@ colocation_thread_exit(struct thread *td)
 void
 colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 {
+	vm_map_t map;
 	struct switchercb scb;
 	struct thread *peertd;
 	struct trapframe peertrapframe;
@@ -239,6 +247,7 @@ colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 
 #if 1
 	printf("in switcher:%d\n",colocation_trap_in_switcher(td,*trapframep));
+	printf("    current scb:	%p\n", (__cheri_fromcap void *)scb.scb_peer_scb);
 	printf("    scb_peer_scb:	%p\n", (__cheri_fromcap void *)scb.scb_peer_scb);
 	printf("    scb_td:		%p\n", scb.scb_td);
 	printf("    scb_borrower_td:	%p\n", scb.scb_borrower_td);

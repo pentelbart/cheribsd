@@ -176,7 +176,7 @@ _C_LABEL(switcher_coaccept):
 
 1:
 	/*
-	 * Save the capability to the caller thread in the callee control block.
+	 * Save the integer pointer to the caller thread in the callee control block.
 	 * This is used by kernel to look up the real thread.  Also clear
 	 * the same field on the caller side.
 	 */

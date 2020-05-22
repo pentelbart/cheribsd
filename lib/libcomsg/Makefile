@@ -3,12 +3,14 @@
 LIB=	comsg
 
 SRCS=	libcomsg.c		\
-	coproc.c
+	coproc.c		\
+	commap.c
 
 INCS=	comsg.h 		\
-	coproc.h\
-	coport.h\
-	sys_comsg.h
+	coproc.h		\
+	coport.h		\
+	sys_comsg.h		\
+	commap.h
 
 INCSDIR=	${INCLUDEDIR}/cheri
 

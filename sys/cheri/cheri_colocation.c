@@ -177,7 +177,7 @@ colocation_thread_exit(struct thread *td)
 	 */
 	scb.scb_peer_scb = cheri_capability_build_user_rwx(0, 0, 0, 0);
 	scb.scb_td = NULL;
-	peertd=scb_borrower_td;
+	peertd=scb.scb_borrower_td;
 	scb.scb_borrower_td = NULL;
 
 	addr = td->td_md.md_scb;

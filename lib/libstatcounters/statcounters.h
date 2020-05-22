@@ -41,8 +41,6 @@
 #endif
 
 
-#define STATCOUNTERS_NO_CTOR_DTOR
-
 #include <stdio.h>
 #include <stdint.h>
 

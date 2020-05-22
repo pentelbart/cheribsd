@@ -23,27 +23,40 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#ifndef COMSG_H
-#define COMSG_H
+#ifndef UKERN_COMMAP_H
+#define UKERN_COMMAP_H
 
-#include "sys_comsg.h"
-#include "coport.h"
-#include "coproc.h"
+#include <stdatomic.h>
+#include <sys/queue.h>
+#include <sys/socket.h>
 #include "commap.h"
-#include <cheri/cherireg.h>
-#include <sys/types.h>
+#include "sys_comsg.h"
+
+#define RANDOM_LEN 3
+
+#define RECV_FLAGS 0
+#define MAX_FDS 255
+#define MAX_MAP_INFO_SIZE ( MAX_FDS * sizeof(commap_info_t)  )
+#define MAX_MSG_SIZE ( MAX_MAP_INFO_SIZE + sizeof(commap_msghdr_t) )
+#define MAX_CMSG_BUFFER_SIZE ( CMSG_BUFFER_SIZE(MAX_FDS) )
+#define TOKEN_PERMS ( CHERI_PERM_GLOBAL | CHERI_PERM_LOAD | CHERI_PERM_LOAD_CAP | CHERI_PERM_STORE )
+#define MMAP_FLAGS(f) ( ( f & ~(MAP_32BIT | MAP_GUARD MAP_STACK) ) | MAP_SHARED )
+#define TOKEN_OTYPE 3
+
+struct ukern_mapping {
+    LIST_ENTRY(ukern_mapping) entries;
+    token_t token;
+    FILE_POS;
+    void * __capability map_cap;
+    _Atomic int refs;
+};
+
+struct ukern_mapping_table {
+    LIST_HEAD(,ukern_mapping) mappings;
+    _Atomic uint count;
+};
 
 
-int coopen(const char * coport_name, coport_type_t type, coport_t * prt);
-coport_t coport_clearperm(coport_t p,int perms);
-int cosend(coport_t p, const void * buf, size_t len);
-int corecv(coport_t p, void ** buf, size_t len);
-int coclose(coport_t port);
-
-int copoll(pollcoport_t * coports, int ncoports, int timeout);
-pollcoport_t make_pollcoport(coport_t port, coport_eventmask_t events);
-coport_type_t coport_gettype(coport_t port);
-
-
+void *ukern_mmap(void *args);
 
 #endif

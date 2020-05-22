@@ -1,3 +1,29 @@
+/*
+ * Copyright (c) 2020 Peter S. Blandford-Baker
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
 #include "comesg_kern.h"
 
 #include <math.h>
@@ -9,6 +35,7 @@
 #include <time.h>
 #include <sys/param.h>
 #include <sys/mman.h>
+#include <sys/queue.h>
 #include <sys/time.h>
 #include <unistd.h>
 #include <string.h>
@@ -26,12 +53,14 @@
 #include "sys_comsg.h"
 #include "ukern_mman.h"
 #include "ukern_params.h"
+#include "ukern_commap.h"
 
 
 #define DEBUG
 
-void * __capability seal_cap;
-int sealed_otype;
+static void * __capability root_seal_cap;
+static otype_t seal_cap;
+static long sealed_otype;
 
 pthread_mutex_t global_copoll_lock;
 pthread_cond_t global_cosend_cond;
@@ -55,23 +84,29 @@ int generate_id(void)
     return random();
 }
 
-int rand_string(char * buf,unsigned int len)
+int rand_string(char * buf, long int len)
 {
     char c;
     char * s;
     int rand_no;
+    long int i;
     s = (char *) malloc(sizeof(char)*len);
     srandomdev();
-    for (unsigned int i = 0; i < len-1; i++)
+    for (i = 0; i < len-1; i++)
     {
         rand_no=random() % KEYSPACE;
         c=(char)rand_no+0x21;
+        while(c=='"')
+        {
+            rand_no=random() % KEYSPACE;
+            c=(char)rand_no+0x21;
+        }
         s[i]=c;
     }
     s[len-1]='\0';
     strcpy(buf,s);
     free(s);
-    return 0;
+    return i;
 }
 
 int add_port(coport_tbl_entry_t entry)
@@ -189,20 +224,23 @@ bool valid_coport(sys_coport_t * addr)
     vaddr_t port_addr = (vaddr_t) addr;
     int index;
 
-    if(cheri_getlen(addr)!=sizeof(sys_coport_t))
+    if(cheri_getlen(addr)<sizeof(sys_coport_t))
     {
+        printf("too small to represent coport\n");
         return false;
     }
-    else if(cheri_is_address_inbounds(coport_table.table,port_addr))
+    else if(!cheri_is_address_inbounds(coport_table.table,port_addr))
     {
+        printf("address not in bounds\n");
         return false;
     }
     else
     {
         table_offset=port_addr-cheri_getbase(coport_table.table);
         index=table_offset/sizeof(coport_tbl_entry_t);
-        if(& coport_table.table[index].port!=addr)
+        if(&coport_table.table[index].port!=addr)
         {
+            printf("offset looks wrong\n");
             return false;
         }
     }
@@ -211,18 +249,20 @@ bool valid_coport(sys_coport_t * addr)
 
 bool valid_cocarrier(sys_coport_t * addr)
 {
+    if(cheri_gettype(addr)!=sealed_otype)
+    {
+        printf("wrong type\n");
+        return false;
+    }
+    else
+    {
+        addr=cheri_unseal(addr,root_seal_cap);
+    }
     if(!valid_coport(addr))
     {
         return false;
     }
-    else if(!cheri_getsealed(addr))
-    {
-        return false;
-    }
-    else if(cheri_gettype(addr)!=sealed_otype)
-    {
-        return false;
-    }
+
     return true;
 }
 
@@ -233,7 +273,6 @@ bool event_match(sys_coport_t * cocarrier,coport_eventmask_t e)
 
 void *copoll_deliver(void *args)
 {
-    coport_eventmask_t event;
 	sys_coport_t *cocarrier;
 	coport_listener_t *l,*l_temp;
 	pthread_mutex_lock(&global_copoll_lock);
@@ -243,18 +282,15 @@ void *copoll_deliver(void *args)
 		for (int i = 0; i < coport_table.index; ++i)
 		{
 			cocarrier=&coport_table.table[i].port;
-			if(cocarrier->type!=COCARRIER)
-			{
-				cocarrier=NULL;
-				continue;
-			}
-			else if (LIST_EMPTY(&cocarrier->listeners))
+
+			if(cocarrier->type!=COCARRIER || (LIST_EMPTY(&cocarrier->listeners)))
 			{
 				cocarrier=NULL;
 				continue;
 			}
 			else
 			{
+                atomic_thread_fence(memory_order_acquire);
 				LIST_FOREACH_SAFE(l,&cocarrier->listeners,entries,l_temp)
 				{
 					if(event_match(cocarrier,l->eventmask))
@@ -263,7 +299,7 @@ void *copoll_deliver(void *args)
 						l->revent=cocarrier->event;
 					}
 				}
-				event=NOEVENT;
+				atomic_thread_fence(memory_order_release);
 			}
 		}
 	}
@@ -280,7 +316,6 @@ void *cocarrier_poll(void *args)
     int ncoports;
     struct timespec timeout_spec;
     struct timespec curtime_spec;
-    bool got_woken_up;
 
     worker_args_t * data = args;
     copoll_args_t * copoll_args = calloc(1,sizeof(copoll_args));
@@ -301,11 +336,12 @@ void *cocarrier_poll(void *args)
     
     error=coaccept_init(&sw_code,&sw_data,data->name,&target);
     data->cap=target;
-    update_worker_args(data,U_COCARRIER_POLL);
+    update_worker_args(data,U_COPOLL);
     for (;;)
     {
+    	//This could likely be organized much better.
+    	//When the refactor comes, this will need an appointment with Dr Guillotin
         error=coaccept(sw_code,sw_data,&caller_cookie,copoll_args,sizeof(copoll_args_t));
-        listen_entries=ukern_fast_malloc(CHERICAP_SIZE*copoll_args->ncoports);        
         targets=ukern_fast_malloc(sizeof(pollcoport_t)*copoll_args->ncoports);
         memcpy(targets,copoll_args->coports,sizeof(pollcoport_t)*copoll_args->ncoports);
         ncoports=copoll_args->ncoports;
@@ -324,32 +360,49 @@ void *cocarrier_poll(void *args)
                 copoll_args->error=EINVAL;
                 continue;
             }
-            cocarrier=cheri_unseal(cocarrier,seal_cap);
-            listen_entries[i]=ukern_fast_malloc(sizeof(coport_listener_t));
-            listen_entries[i]->wakeup=wake;
-            listen_entries[i]->revent=NOEVENT;
-            listen_entries[i]->eventmask=targets[i].events;
-            
+            targets[i].coport=cheri_unseal(cocarrier,root_seal_cap);
         }
+
         if(copoll_args->status==-1)
         {
             //we need to clean up
-            for (int j = 0; j < i; ++j)
-            {
-            	ukern_fast_free(listen_entries[j]);
-            }
-            ukern_fast_free(listen_entries);
             ukern_fast_free(targets);
             copoll_args->error=EINVAL;
             continue;
         }
+        if(copoll_args->timeout!=0)
+        {
+        	listen_entries=ukern_fast_malloc(CHERICAP_SIZE*copoll_args->ncoports);
+        	for(i = 0; i<ncoports;i++)
+        	{
+        		listen_entries[i]=ukern_fast_malloc(sizeof(coport_listener_t));
+	            listen_entries[i]->wakeup=wake;
+	            listen_entries[i]->revent=NOEVENT;
+	            listen_entries[i]->eventmask=targets[i].events;
+        	}
+        }
+        
+        if (copoll_args->timeout==0)
+        {
+        		atomic_thread_fence(memory_order_acquire);
+        		for(i=0;i<ncoports; ++i)
+        		{
+        			cocarrier=targets[i].coport;
+        			copoll_args->coports[i].revents=(copoll_args->coports[i].revents & cocarrier->event);
+        		}
+        		atomic_thread_fence(memory_order_release);
+        		ukern_fast_free(targets);
+        		continue;
+        }
+
         pthread_mutex_lock(&global_copoll_lock);
         for (i = 0; i < ncoports; ++i)
         {
+        	cocarrier=targets[i].coport;
         	LIST_INSERT_HEAD(&cocarrier->listeners,listen_entries[i],entries);
         }
-        got_woken_up=false;
-        if(copoll_args->timeout!=0)
+
+        if(copoll_args->timeout!=-1)
         {
         	timespec_get(&curtime_spec,TIME_UTC);
 	        timeout_spec.tv_nsec=copoll_args->timeout;
@@ -363,12 +416,7 @@ void *cocarrier_poll(void *args)
         /*do stuff*/
         for(i = 0; i<ncoports;i++)
         {
-        	cocarrier=copoll_args->coports[i].coport;
-        	if(listen_entries[i]->revent!=NOEVENT)
-        	{
-        		copoll_args->coports[i].revents=listen_entries[i]->revent;
-        		got_woken_up = true;
-        	}
+        	copoll_args->coports[i].revents=listen_entries[i]->revent;
         	LIST_REMOVE(listen_entries[i],entries);
         }
         pthread_mutex_unlock(&global_copoll_lock);
@@ -386,7 +434,7 @@ void *cocarrier_recv(void *args)
 {
 	int error;
     uint index;
-    coport_status_t status;
+    //coport_status_t status;
     uint len;
 
     worker_args_t * data = args;
@@ -416,42 +464,39 @@ void *cocarrier_recv(void *args)
             cocarrier_send_args->error=EINVAL;
             continue;
         }
-        cocarrier=cheri_unseal(cocarrier,seal_cap);
-        for(;;)
-        {
-            status=COPORT_OPEN;
-            if(atomic_compare_exchange_weak_explicit(&cocarrier->status,&status,COPORT_BUSY,memory_order_acq_rel,memory_order_acquire))
-            {
-                break;
-            }
-        }
+        cocarrier=cheri_unseal(cocarrier,root_seal_cap);
+        cocarrier_buf=cocarrier->buffer;
         atomic_thread_fence(memory_order_acquire);
+        atomic_store_explicit(&cocarrier->status,COPORT_BUSY,memory_order_release);
         index=cocarrier->start;
         if(cocarrier->length==0)
         {
+                cocarrier->event&=COPOLL_RERR;
+                atomic_thread_fence(memory_order_release);
 
-            	//buffer is empty - return error
+                //buffer is empty - return error
                 cocarrier_send_args->status=-1;
                 cocarrier_send_args->error=EAGAIN;
-                atomic_thread_fence(memory_order_release);
                 continue;
         }
-        cocarrier_buf=cocarrier->buffer;
         len=MIN(cheri_getlen(cocarrier_buf[index]),cheri_getlen(cocarrier_send_args->message));
         memcpy(cocarrier_send_args->message,cocarrier_buf[index],len);
         cocarrier->start++;
         cocarrier->length--;
-
-        pthread_mutex_lock(&global_copoll_lock);
-        cocarrier->event=COPOLL_OUT;
+        if (cocarrier->length==0)
+        	cocarrier->event=((COPOLL_OUT | cocarrier->event) & ~COPOLL_RERR) & ~COPOLL_IN;
+        else
+            cocarrier->event=((COPOLL_OUT | cocarrier->event) & ~COPOLL_RERR);
+        
+        atomic_store_explicit(&cocarrier->status,COPORT_OPEN,memory_order_release);
+        atomic_thread_fence(memory_order_release);
         if(!LIST_EMPTY(&cocarrier->listeners))
         {
-        	pthread_cond_signal(&global_cosend_cond);
+            pthread_cond_signal(&global_cosend_cond);
         }
-        pthread_mutex_unlock(&global_copoll_lock);
 
-        atomic_store_explicit(&cocarrier->status,COPORT_OPEN,memory_order_relaxed);
-        atomic_thread_fence(memory_order_release);
+        cocarrier_send_args->status=len;
+        cocarrier_send_args->error=0;
     }
     return args;
 }
@@ -460,8 +505,8 @@ void *cocarrier_send(void *args)
 {
     //todo implement
     int error;
-    uint index;
-    coport_status_t status;
+    size_t index;
+    //coport_status_t status;
 
     worker_args_t * data = args;
     cocall_cocarrier_send_t * cocarrier_send_args;
@@ -489,9 +534,10 @@ void *cocarrier_send(void *args)
         {
             cocarrier_send_args->status=-1;
             cocarrier_send_args->error=EINVAL;
+
             continue;
         }
-        cocarrier=cheri_unseal(cocarrier,seal_cap);
+        cocarrier=cheri_unseal(cocarrier,root_seal_cap);
         //allocate ukernel owned buffer
         msg_buf=ukern_fast_malloc(cheri_getlen(cocarrier_send_args->message));
         //copy data into buffer
@@ -499,49 +545,50 @@ void *cocarrier_send(void *args)
         //reduce cap permissions on buffer
         msg_buf=cheri_andperm(msg_buf,COCARRIER_PERMS);
         //toggle state to busy
-        for(;;)
-        {
-            status=COPORT_OPEN;
-            if(atomic_compare_exchange_weak_explicit(&cocarrier->status,&status,COPORT_BUSY,memory_order_acq_rel,memory_order_acquire))
-            {
-                break;
-            }
-        }
-        //add buffer to cocarrrier
-        atomic_thread_fence(memory_order_acquire);
         cocarrier_buf=cocarrier->buffer;
+        //add buffer to cocarrrier
+        cocarrier_buf=cocarrier->buffer;
+        atomic_thread_fence(memory_order_acquire);
         index=(cocarrier->end+1)%COCARRIER_SIZE;
-        if(cocarrier->length!=0)
+        if(cocarrier->length>0)
         {
             if(index==cocarrier->start)
             {
-            	//buffer is full - return error
-                cocarrier_send_args->status=-1;
-                cocarrier_send_args->error=EAGAIN;
-                atomic_store_explicit(&cocarrier->status,COPORT_OPEN,memory_order_relaxed);
+                cocarrier->event&=COPOLL_WERR;
+                //cocarrier->status=COPORT_OPEN;
                 atomic_thread_fence(memory_order_release);
                 ukern_fast_free(msg_buf);
+
+                //buffer is full - return error
+                cocarrier_send_args->status=-1;
+                cocarrier_send_args->error=EAGAIN;
                 continue;
             }
         }
         if(cheri_gettag(cocarrier_buf[index]))
         {
+        	//auto overwrite old messages once we've wrapped around
         	ukern_fast_free(cocarrier_buf[index]);
         }
         cocarrier_buf[index]=msg_buf;
         cocarrier->end=index;
         cocarrier->length++;
+        
+        if(cocarrier->length==COCARRIER_SIZE)
+        	cocarrier->event=(((COPOLL_IN | cocarrier->event) & ~COPOLL_WERR) & ~COPOLL_OUT);
+        else
+            cocarrier->event=(COPOLL_IN | cocarrier->event) & ~COPOLL_WERR;
         //check if anyone is waiting on messages to arrive
-        pthread_mutex_lock(&global_copoll_lock);
-        cocarrier->event=COPOLL_OUT;
+        atomic_store_explicit(&cocarrier->status,COPORT_OPEN,memory_order_release);
+        atomic_thread_fence(memory_order_release);
         if(!LIST_EMPTY(&cocarrier->listeners))
         {
-        	pthread_cond_signal(&global_cosend_cond);
+            pthread_cond_signal(&global_cosend_cond);
         }
-        pthread_mutex_unlock(&global_copoll_lock);
         //release
-        atomic_store_explicit(&cocarrier->status,COPORT_OPEN,memory_order_relaxed);
-        atomic_thread_fence(memory_order_release);
+        cocarrier_send_args->status=cheri_getlen(cocarrier_send_args->message);
+        cocarrier_send_args->error=0;
+        
     }
     free(cocarrier_send_args);
     return 0;
@@ -600,13 +647,13 @@ void *coport_open(void *args)
             if(port.type==COCARRIER)
             {
                 LIST_INIT(&port.listeners);
+                port.event=COPOLL_INIT_EVENTS;
             }
             table_entry.port=port;
             table_entry.id=generate_id();
             strcpy(table_entry.name,coport_args->args.name);
             index=add_port(table_entry);
             //printf("coport %s added to table\n",coport_args->args.name);
-            //printf("buffer_perms: %lx\n",cheri_getperm(port->buffer));
             prt=cheri_csetbounds(&coport_table.table[index].port,sizeof(sys_coport_t));
         }
         if(prt->type==COCARRIER)
@@ -614,6 +661,8 @@ void *coport_open(void *args)
             prt=cheri_seal(prt,seal_cap);
         }
         coport_args->port=prt;
+        printf("coport_perms: %lu\n",cheri_getperm(prt));
+
     }
     free(coport_args);
     return 0;
@@ -820,7 +869,7 @@ void *manage_requests(void *args)
 int coaccept_init(
     void * __capability * __capability  code_cap,
     void * __capability * __capability  data_cap, 
-    char * target_name,
+    const char * target_name,
     void * __capability * __capability target_cap)
 {
     int error;
@@ -834,12 +883,12 @@ int coaccept_init(
     error=coregister(target_name,target_cap);
     if (error!=0)
     {
-        err(1,"ERROR: Could not coregister with name %s.\n",target_name);
+        err(errno,"ERROR: Could not coregister with name %s.\n",target_name);
     }
     //printf("Successfully coregistered with name %s\n",target_name);
     //printf("validity: %u\n",cheri_gettag(*target_cap));
 
-    return 0;
+    return (error);
 }
 
 int coport_tbl_setup(void)
@@ -884,7 +933,7 @@ int spawn_workers(void * func, pthread_t * threads, const char * name)
     char * thread_name;
     bool private;
 
-    if (name[0]!='_')
+    if (name[0]=='_')
     	private=true;
     else
     	private=false;
@@ -943,10 +992,10 @@ void run_tests(void)
 int main(int argc, const char *argv[])
 {
     int verbose;
-    int error;
+    int error = 0;
     request_handler_args_t * handler_args;
 
-    pthread_t memory_manager;
+    pthread_t memory_manager, commap_manager;
     pthread_t coopen_threads[WORKER_COUNT];
     pthread_t counlock_threads[WORKER_COUNT];
     pthread_t comutex_init_threads[WORKER_COUNT];
@@ -991,6 +1040,12 @@ int main(int argc, const char *argv[])
     pthread_attr_init(&thread_attrs);
     pthread_create(&memory_manager,&thread_attrs,ukern_mman,NULL);
 
+    error+=sysarch(CHERI_GET_SEALCAP,&root_seal_cap);
+    seal_cap=cheri_maketype(root_seal_cap,UKERN_OTYPE);
+    sealed_otype=cheri_gettype(cheri_seal(&argc,seal_cap));
+    root_seal_cap=cheri_setoffset(root_seal_cap,UKERN_OTYPE);
+    memset(&worker_map,0,sizeof(worker_map_entry_t)*U_FUNCTIONS);
+
     while(jobs_queue.max_len!=(WORKER_COUNT*U_FUNCTIONS)+2)
     {
         //this really shouldn't take long.
@@ -998,18 +1053,14 @@ int main(int argc, const char *argv[])
         //i apologise
         __asm("nop");
     }
-
-    error=coport_tbl_setup();
+    error+=coport_tbl_setup();
     error+=comutex_tbl_setup();
-
-    error+=sysarch(CHERI_GET_SEALCAP,&seal_cap);
-    sealed_otype=cheri_gettype(cheri_seal(&argc,seal_cap));
-    memset(&worker_map,0,sizeof(worker_map_entry_t)*U_FUNCTIONS);
     if(error!=0)
     {
-        err(1,"Table setup failed!!");
+        err(1,"Initial setup failed!!");
     }
-    printf("Table setup complete.\n");
+    printf("Initial setup complete.\n");
+    pthread_create(&commap_manager,&thread_attrs,ukern_mmap,NULL);
 
     /* perform setup */
     printf("Spawning co-open listeners...\n");
@@ -1025,7 +1076,7 @@ int main(int argc, const char *argv[])
     printf("Spawning cocarrier recv listeners...\n");
     error+=spawn_workers(&cocarrier_recv,cocarrier_recv_threads,U_COCARRIER_RECV);
     printf("Spawning copoll listeners...\n");
-    error+=spawn_workers(&cocarrier_poll,copoll_threads,U_COCARRIER_POLL);
+    error+=spawn_workers(&cocarrier_poll,copoll_threads,U_COPOLL);
     error+=spawn_workers(&copoll_deliver,copoll_deliver_threads,"_copoll_deliver");
     // XXX-PBB: Not implemented yet
     /*
@@ -1067,7 +1118,7 @@ int main(int argc, const char *argv[])
     pthread_create(&cocarrier_recv_handler,&thread_attrs,manage_requests,handler_args);
 
     handler_args=ukern_malloc(sizeof(request_handler_args_t));
-    strcpy(handler_args->func_name,U_COCARRIER_POLL);
+    strcpy(handler_args->func_name,U_COPOLL);
     pthread_attr_init(&thread_attrs);
     pthread_create(&copoll_handler,&thread_attrs,manage_requests,handler_args);
 

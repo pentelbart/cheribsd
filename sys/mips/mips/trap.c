@@ -189,7 +189,7 @@ SYSCTL_INT(_machdep, OID_AUTO, log_cheri_registers, CTLFLAG_RW,
 			: "r" (data), "r" (addr));	/* inputs */
 
 static void log_illegal_instruction(const char *, struct trapframe *);
-static void log_bad_page_fault(char *, struct trapframe *, int);
+static void log_bad_page_fault(char *, struct trapframe *, int, int);
 #ifdef CPU_CHERI
 static void log_c2e_exception(const char *, struct trapframe *, int);
 #endif
@@ -956,6 +956,7 @@ dofault:
 				}
 				goto out;
 			}
+
 	nogo:
 			if (!usermode) {
 				if (td->td_pcb->pcb_onfault != NULL) {
@@ -967,7 +968,7 @@ dofault:
 			}
 
 			msg = "BAD_PAGE_FAULT";
-			log_bad_page_fault(msg, trapframe, type);
+			log_bad_page_fault(msg, trapframe, type, rv);
 
 			break;
 		}
@@ -1001,7 +1002,7 @@ dofault:
 		i = SIGBUS;
 		if (!msg)
 			msg = "BUS_ERR";
-		log_bad_page_fault(msg, trapframe, type);
+		log_bad_page_fault(msg, trapframe, type, 0);
 		break;
 
 	case T_SYSCALL + T_USER:
@@ -1893,7 +1894,7 @@ log_illegal_instruction(const char *msg, struct trapframe *frame)
 }
 
 static void
-log_bad_page_fault(char *msg, struct trapframe *frame, int trap_type)
+log_bad_page_fault(char *msg, struct trapframe *frame, int trap_type, int cause)
 {
 	pt_entry_t *ptep;
 	pd_entry_t *pdep;
@@ -1903,6 +1904,7 @@ log_bad_page_fault(char *msg, struct trapframe *frame, int trap_type)
 	struct thread *td;
 	struct proc *p;
 	char *read_or_write;
+	char *pagefault_cause;
 	register_t pc;
 
 	if (!log_bad_page_faults)
@@ -1931,15 +1933,42 @@ log_bad_page_fault(char *msg, struct trapframe *frame, int trap_type)
 		read_or_write = "unknown";
 	}
 
+	switch (cause) {
+		case	KERN_SUCCESS:
+			pagefault_cause="KERN_SUCCESS";
+		case KERN_INVALID_ADDRESS:
+			pagefault_cause="KERN_INVALID_ADDRESS";
+		case KERN_PROTECTION_FAILURE:
+			pagefault_cause="KERN_PROTECTION_FAILURE";
+		case	KERN_NO_SPACE:
+			pagefault_cause="KERN_NO_SPACE";
+		case	KERN_INVALID_ARGUMENT:
+			pagefault_cause="KERN_INVALID_ARGUMENT";
+		case KERN_FAILURE:
+			pagefault_cause="KERN_FAILURE";
+		case	KERN_RESOURCE_SHORTAGE:
+			pagefault_cause="KERN_RESOURCE_SHORTAGE";
+		case	KERN_NOT_RECEIVER:
+			pagefault_cause="KERN_NOT_RECEIVER";
+		case KERN_NO_ACCESS:
+			pagefault_cause="KERN_NO_ACCESS";
+		case KERN_OUT_OF_BOUNDS:
+			pagefault_cause="KERN_OUT_OF_BOUNDS";
+		case	KERN_RESTART:
+			pagefault_cause="KERN_OUT_OF_BOUNDS";
+	}
+	
+
 	pc = TRAPF_PC(frame) + (DELAYBRANCH(frame->cause) ? 4 : 0);
 	log(LOG_ERR, "%s: pid %d tid %ld (%s), uid %d: pc %#jx got a %s fault "
-	    "(type %#x) at %#jx\n",
+	    "(type %#x) at %#jx. Cause: %s \n ",
 	    msg, p->p_pid, (long)td->td_tid, p->p_comm,
 	    p->p_ucred ? p->p_ucred->cr_uid : -1,
 	    (intmax_t)pc,
 	    read_or_write,
 	    trap_type,
-	    (intmax_t)frame->badvaddr);
+	    (intmax_t)frame->badvaddr,
+	    pagefault_cause);
 
 	/* log registers in trap frame */
 	log_frame_dump(frame);

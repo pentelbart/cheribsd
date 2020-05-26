@@ -320,9 +320,9 @@ syscall_thread_exit(struct thread *td, struct sysent *se)
 	_syscall_thread_exit(td, se);
 }
 
-int shared_page_alloc(int size, int align);
-int shared_page_fill(int size, int align, const void *data);
-void shared_page_write(int base, int size, const void *data);
+vm_offset_t shared_page_alloc(vm_offset_t size, int align);
+vm_offset_t shared_page_fill(vm_offset_t size, int align, const void *data);
+void shared_page_write(vm_offset_t base, vm_offset_t size, const void *data);
 void exec_sysvec_init(void *param);
 void exec_inittk(void);
 

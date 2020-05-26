@@ -1,6 +1,12 @@
-/*
- * Copyright (c) 2020 Peter S. Blandford-Baker
- * All rights reserved.
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2019 Alex Richardson
+ *
+ * This software was developed by SRI International and the University of
+ * Cambridge Computer Laboratory (Department of Computer Science and
+ * Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
+ * DARPA SSITH research programme.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,38 +29,15 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#ifndef _COMESG_KERN
-#define _COMESG_KERN
 
-#include <pthread.h>
-#include <stdatomic.h>
-#include <cheri/cheric.h>
-#include <cheri/cherireg.h>
-#include <stdbool.h>
-#include <sys/queue.h>
+/* This header provides statcounters_get_foo_count() for all statcounters supported by BERI */
 
-#include "coport.h"
-#include "sys_comsg.h"
-#include "sys_comutex.h"
-#include "ukern_params.h"
-
-
-
-/*#define TBL_PERMS ( CHERI_PERM_LOAD | CHERI_PERM_LOAD_CAP | \
-	CHERI_PERM_STORE | CHERI_PERM_STORE_CAP | CHERI_PERM_GLOBAL |\
-	CHERI_PERM_STORE_LOCAL_CAP )*/
-#define WORKER_FUNCTIONS ( U_FUNCTIONS + UKERN_PRIV )
-
-void *copoll_deliver(void *args);
-void *cocarrier_poll(void *args);
-void *cocarrier_register(void *args);
-void *cocarrier_recv(void *args);
-void *cocarrier_send(void *args);
-void *coport_open(void *args);
-int main(int argc, const char *argv[]);
-
-extern otype_t seal_cap;
-extern long sealed_otype;
-
-
-#endif
+#define STATCOUNTER_ITEM(name, X, Y)	\
+static inline uint64_t statcounters_get_##name##_count(void)   \
+{                                           \
+    uint64_t ret;                           \
+    __asm __volatile(".word (0x1f << 26) | (0x0 << 21) | (12 << 16) | ("#X" << 11) | ( "#Y"  << 6) | 0x3b\n\tmove %0,$12" : "=r" (ret) :: "$12"); \
+    return ret;                             \
+}
+#include "statcounters_mips.inc"
+#undef STATCOUNTER_ITEM

@@ -157,7 +157,6 @@ colocation_get_peer(struct thread *td, struct thread **peertdp)
 void
 colocation_thread_exit(struct thread *td)
 {
-	struct thread *peertd;
 	struct switchercb scb, *peerscb;
 	vaddr_t addr;
 	bool have_scb;
@@ -177,7 +176,6 @@ colocation_thread_exit(struct thread *td)
 	 */
 	scb.scb_peer_scb = cheri_capability_build_user_rwx(0, 0, 0, 0);
 	scb.scb_td = NULL;
-	peertd=scb.scb_borrower_td;
 	scb.scb_borrower_td = NULL;
 
 	addr = td->td_md.md_scb;
@@ -190,13 +188,7 @@ colocation_thread_exit(struct thread *td)
 	}
 
 	if (peerscb == NULL )
-	{
-		if (peertd == NULL)
-			return;
-		else
-			peerscb=peertd->td_md.md_scb;
-	}
-
+		return;	
 
 	error = copyincap(___USER_CFROMPTR((void *)peerscb, userspace_cap), &scb, sizeof(scb));
 	if (error != 0) {
@@ -205,10 +197,8 @@ colocation_thread_exit(struct thread *td)
 		return;
 	}
 
-	if (cheri_getbase(scb.scb_peer_scb)==addr)
-		scb.scb_peer_scb = NULL;
-	if (scb.scb_borrower_td==peertd)
-		scb.scb_borrower_td = NULL;
+	scb.scb_peer_scb = NULL;
+	scb.scb_borrower_td = NULL;
 
 	error = copyoutcap(&scb, ___USER_CFROMPTR((void *)peerscb, userspace_cap), sizeof(scb));
 	if (error != 0) {
@@ -224,12 +214,12 @@ colocation_thread_exit(struct thread *td)
 void
 colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 {
-	struct switchercb scb;
+	struct switchercb scb, peerscb;
 	struct thread *peertd;
 	struct trapframe peertrapframe;
 	struct syscall_args peersa;
 	trapf_pc_t peertpc;
-	bool have_scb;
+	bool have_scb, have_peer_scb;
 
 	have_scb = colocation_fetch_scb(td, &scb);
 	if (!have_scb)
@@ -240,13 +230,28 @@ colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 		/*
 		 * Nothing borrowed yet.
 		 */
+		td->td_md.md_borrowed = NULL;
 		return;
 	}
-
+	have_peer_scb = colocation_fetch_scb(peertd, &peerscb);
 	KASSERT(peertd != td,
 	    ("%s: peertd %p == td %p\n", __func__, peertd, td));
+	//are we in a cocall, or have we returned?
+	if (scb.scb_peer_scb == NULL)
+	{
+		//allow swap-backs after cocall has returned
+		if(!(td->td_md.md_borrowed==peertd && peertd->td_md.md_borrowed==td))
+		{
+			scb.scb_borrower_td = NULL;
+			return;
+		}
+	}
+	if (peertd != td->td_md.md_borrowed)
+	{
+		//uh oh.
+	}
 
-#if 1
+#if 0
 	printf("in switcher:%d\n",colocation_trap_in_switcher(td,*trapframep));
 	printf("    current scb:	%p\n", (__cheri_fromcap void *)scb.scb_peer_scb);
 	printf("    scb_peer_scb:	%p\n", (__cheri_fromcap void *)scb.scb_peer_scb);
@@ -254,7 +259,9 @@ colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 	printf("    scb_borrower_td:	%p\n", scb.scb_borrower_td);
 	printf("    scb_unsealcap:	%p\n", (__cheri_fromcap void *)scb.scb_unsealcap);
 	printf("syscall is %s\n",syscallname(td->td_proc,td->td_sa.code));
+#endif
 
+#if 0
 	printf("%s: replacing current td %p, switchercb %#lx, md_tls %p, md_tls_tcb_offset %zd, "
 	    "with td %p, switchercb %#lx, md_tls %p, md_tls_tcb_offset %zd\n", __func__,
 	    td, td->td_md.md_scb, (__cheri_fromcap void *)td->td_md.md_tls, td->td_md.md_tls_tcb_offset,
@@ -273,20 +280,38 @@ colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 	    ("%s: peertd->td_frame %p != &peertd->td_pcb->pcb_regs %p, peertd %p",
 	    __func__, peertd->td_frame, &peertd->td_pcb->pcb_regs, peertd));
 
+	// Retrieve copark(2) trapframe from waiting thread.
 	peersa = peertd->td_sa;
 	memcpy(&peertrapframe, peertd->td_sa.trapframe, sizeof(struct trapframe));
 	peertpc = peertd->td_pcb->pcb_tpc;
 
+	// Assign our trapframe to the waiting thread
 	peertd->td_sa = td->td_sa;
 	memcpy(peertd->td_frame, *trapframep, sizeof(struct trapframe));
 	peertd->td_pcb->pcb_tpc = td->td_pcb->pcb_tpc;
 
+	// Assign the copark(2) trapframe to our thread.
 	td->td_sa = peersa;
 	memcpy(td->td_frame, &peertrapframe, sizeof(struct trapframe));
 	td->td_pcb->pcb_tpc = peertpc;
 
 	*trapframep = td->td_frame;
 
+	if (scb.scb_peer_scb == NULL)
+	{
+		//check this is a swap back
+		KASSERT(td->td_md.md_borrowed==peertd && peertd->td_md.md_borrowed==td,
+			("%s: td->td_md.md_borrowed %p != peertd->td_md.md_borrowed %p\n", __func__, td->td_md.md_borrowed, peertd->td_md.md_borrowed));
+		scb.scb_borrower_td = NULL;
+		td->td_md.md_borrowed = NULL;
+		peertd->td_md.md_borrowed = NULL;
+	}
+	else
+	{
+		td->td_md.md_borrowed = peertd;
+		peertd->td_md.md_borrowed = td;	
+	}
+	
 	wakeup(&peertd->td_md.md_scb);
 
 	/*
@@ -395,6 +420,7 @@ kern_cosetup(struct thread *td, int what,
 	}
 
 	addr = td->td_md.md_scb;
+	td->td_md.md_borrowed = NULL;
 
 	switch (what) {
 	case COSETUP_COCALL:

@@ -28,6 +28,7 @@
 
 #include <sys/queue.h>
 #include <cheri/cheric.h>
+#include <cheri/cherireg.h>
 #include <sys/mman.h>
 #include <sys/param.h>
 #include <stdatomic.h>
@@ -39,10 +40,8 @@
 #define COPORT_NAME_LEN 255
 #endif
 
-#define COPORT_PERM_RECV CHERI_PERM_SW0
-#define COPORT_PERM_SEND CHERI_PERM_SW1
-#define COPORT_PERM_POLL CHERI_PERM_SW2
-#define COPORT_PERM_CLOSE CHERI_PERM_SW3
+#define COPORT_PERM_RECV CHERI_PERM_SW2
+#define COPORT_PERM_SEND CHERI_PERM_SW3
 
 #define COPORT_MMAP_FLAGS (MAP_ANONYMOUS | MAP_SHARED | MAP_ALIGNED_CHERI)
 #define COPORT_MMAP_PROT (PROT_READ | PROT_WRITE)
@@ -100,9 +99,9 @@ typedef struct __no_subobject_bounds _coport_listener
 struct _coport
 {
     void * __capability buffer;
-    size_t length;
-    size_t start;
-    size_t end;
+    _Atomic size_t length;
+    _Atomic size_t start;
+    _Atomic size_t end;
     _Atomic coport_status_t status;
     coport_type_t type;
     union //used to allow other coport_type dependent stuff later if we want it.

@@ -26,8 +26,10 @@
 //TODO-PBB:REFACTOR THIS MESS
 #include "ukern_commap.h"
 #include "commap.h"
+#include "sys_comsg.h"
 
-#include "comesg_kern.h"
+#include "ukern_utils.h"
+#include "ukern_requests.h"
 #include "ukern_params.h"
 #include "coproc.h"
 
@@ -69,8 +71,8 @@ static struct ukern_mapping_table mmap_tbl;
 static
 void remove_sockf(void)
 {
-    if (strcmp(path_prefix,bind_path)!=0)
-        unlink(bind_path);
+    unlink(rsock_addr.sun_path);
+    close(rsock_fd);
 }
 
 static
@@ -295,7 +297,6 @@ void *getfds(void *args)
     return args;
 }
 
-static
 void *co_mmap(void *args)
 {
     void * __capability code;
@@ -357,7 +358,7 @@ void *co_mmap(void *args)
     return args;
 }
 
-static
+
 void *co_unmap(void *args)
 {
     void * __capability code;

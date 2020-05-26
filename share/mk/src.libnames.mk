@@ -100,6 +100,7 @@ _LIBRARIES=	\
 		cap_syslog \
 		com_err \
 		compiler_rt \
+		comsg \
 		crypt \
 		crypto \
 		ctf \
@@ -250,6 +251,7 @@ LIBVERIEXEC?=	${LIBVERIEXECDIR}/libveriexec${PIE_SUFFIX}.a
 
 # Each library's LIBADD needs to be duplicated here for static linkage of
 # 2nd+ order consumers.  Auto-generating this would be better.
+_DP_comsg= statcounters
 _DP_80211=	sbuf bsdxml
 _DP_archive=	z bz2 lzma bsdxml zstd
 _DP_zstd=	pthread

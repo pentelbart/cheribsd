@@ -59,20 +59,20 @@ __FBSDID("$FreeBSD$");
 
 static struct sx shared_page_alloc_sx;
 static vm_object_t shared_page_obj;
-static int shared_page_free;
+static vm_offset_t shared_page_free;
 char *shared_page_mapping;
 
 void
-shared_page_write(int base, int size, const void *data)
+shared_page_write(vm_offset_t base, vm_offset_t size, const void *data)
 {
 
 	bcopy(data, shared_page_mapping + base, size);
 }
 
-static int
-shared_page_alloc_locked(int size, int align)
+static vm_offset_t
+shared_page_alloc_locked(vm_offset_t size, int align)
 {
-	int res;
+	vm_offset_t res;
 
 	res = roundup(shared_page_free, align);
 	if (res + size >= IDX_TO_OFF(shared_page_obj->size))
@@ -82,10 +82,10 @@ shared_page_alloc_locked(int size, int align)
 	return (res);
 }
 
-int
-shared_page_alloc(int size, int align)
+vm_offset_t
+shared_page_alloc(vm_offset_t size, int align)
 {
-	int res;
+	vm_offset_t res;
 
 	sx_xlock(&shared_page_alloc_sx);
 	res = shared_page_alloc_locked(size, align);
@@ -93,10 +93,10 @@ shared_page_alloc(int size, int align)
 	return (res);
 }
 
-int
-shared_page_fill(int size, int align, const void *data)
+vm_offset_t
+shared_page_fill(vm_offset_t size, int align, const void *data)
 {
-	int res;
+	vm_offset_t res;
 
 	sx_xlock(&shared_page_alloc_sx);
 	res = shared_page_alloc_locked(size, align);
@@ -262,19 +262,26 @@ void
 exec_sysvec_init(void *param)
 {
 	struct sysentvec *sv;
+	vm_offset_t alloc_base;
 
 	sv = (struct sysentvec *)param;
 	if ((sv->sv_flags & SV_SHP) == 0)
 		return;
 	sv->sv_shared_page_obj = shared_page_obj;
-	sv->sv_sigcode_base = sv->sv_shared_page_base +
-	    shared_page_fill(*(sv->sv_szsigcode), 16, sv->sv_sigcode);
-	sv->sv_cocall_base = sv->sv_shared_page_base +
-	    shared_page_fill(szswitcher_cocall, 16, switcher_cocall);
+	alloc_base =  shared_page_fill(*(sv->sv_szsigcode), 16, sv->sv_sigcode);
+	KASSERT(alloc_base != -1, ("Unable to allocate space in shared page for sv_sigcode"));
+	sv->sv_sigcode_base = sv->sv_shared_page_base + alloc_base;
+	
+	alloc_base = shared_page_fill(szswitcher_cocall, 16, switcher_cocall);
+	KASSERT(alloc_base != -1, ("Unable to allocate space in shared page for switcher_cocall"));
+	sv->sv_cocall_base = sv->sv_shared_page_base + alloc_base; 
 	sv->sv_cocall_len = szswitcher_cocall;
-	sv->sv_coaccept_base = sv->sv_shared_page_base +
-	    shared_page_fill(szswitcher_coaccept, 16, switcher_coaccept);
+
+	alloc_base = shared_page_fill(szswitcher_coaccept, 16, switcher_coaccept);
+	KASSERT(alloc_base != -1, ("Unable to allocate space in shared page for switcher_coaccept"));
+	sv->sv_coaccept_base = sv->sv_shared_page_base + alloc_base;
 	sv->sv_coaccept_len = szswitcher_coaccept;
+
 	if ((sv->sv_flags & SV_ABI_MASK) != SV_ABI_FREEBSD)
 		return;
 	if ((sv->sv_flags & SV_TIMEKEEP) != 0) {

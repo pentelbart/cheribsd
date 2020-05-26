@@ -109,6 +109,7 @@ struct mdthread {
 #endif
 #ifdef	CPU_CHERI
 	vaddr_t		md_scb;
+	struct thread *md_borrowed;
 #endif
 };
 

@@ -67,7 +67,6 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libkvm \
 	liblzma \
 	libmemstat \
-	${_libstatcounters} \
 	libmd \
 	libmt \
 	lib80211 \
@@ -89,6 +88,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libsbuf \
 	libsmb \
 	libsqlite3 \
+	${_libstatcounters} \
 	libstdbuf \
 	libstdthreads \
 	libsysdecode \
@@ -267,6 +267,8 @@ SUBDIR:=	${SUBDIR:Nlibc++experimental}
 .if ${MACHINE_ABI:Mpurecap}
 SUBDIR+=	libmalloc_simple
 SUBDIR+=	libcomsg
+SUBDIR_DEPEND_libcomsg= ${_libstatcounters}
+
 .endif
 .if ${MK_LIBCHERI} == "yes"
 SUBDIR.${MK_LIBCHERI}+=	libcheri_syscalls

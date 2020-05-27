@@ -33,3 +33,4 @@ cscope.out
 /sys/powerpc/conf/LINT
 /sys/powerpc/conf/LINT64
 /sys/sparc64/conf/LINT
+.DS_Store

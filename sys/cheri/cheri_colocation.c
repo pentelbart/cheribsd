@@ -257,6 +257,19 @@ colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 		 */
 		return;
 	}
+	have_peer_scb = colocation_fetch_scb(peertd, &peerscb);
+	KASSERT(peertd != td,
+	    ("%s: peertd %p == td %p\n", __func__, peertd, td));
+	//are we in a cocall, or have we returned?
+	if (scb.scb_peer_scb == NULL)
+	{
+		//allow swap-backs after cocall has returned
+		if(peerscb.scb_borrower_td!=td && peerscb.scb_borrower_td!=NULL)
+		{
+			scb.scb_borrower_td = NULL;
+			return;
+		}
+	}
 
 	KASSERT(peertd != td,
 	    ("%s: peertd %p == td %p\n", __func__, peertd, td));

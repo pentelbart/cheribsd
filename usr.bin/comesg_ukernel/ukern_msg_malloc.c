@@ -54,6 +54,8 @@ void get_new_mem(void)
 void *map_new_mem(void*args)
 {
 	pthread_mutex_t memlock;
+	pthread_mutex_init(&memlock,NULL);
+	pthread_cond_init(&mem_tbl.need_new_mem, NULL);
 	pthread_mutex_lock(&memlock);
 	for(;;)
 	{

@@ -27,7 +27,7 @@
 #include "comesg_kern.h"
 
 #include "ukern_mman.h"
-#include "ukern_msg_malloc.c"
+#include "ukern_msg_malloc.h"
 #include "ukern_params.h"
 #include "ukern_commap.h"
 #include "ukern_utils.h"

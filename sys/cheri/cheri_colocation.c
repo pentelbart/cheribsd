@@ -278,11 +278,12 @@ colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 	COLOCATION_DEBUG("replacing current td %p, pid %d (%s), switchercb %#lx, "
 	    "md_tls %p, md_tls_tcb_offset %zd, "
 	    "with td %p, pid %d (%s), switchercb %#lx, "
-	    "md_tls %p, md_tls_tcb_offset %zd",
+	    "md_tls %p, md_tls_tcb_offset %zd for syscall %s",
 	    td, td->td_proc->p_pid, td->td_proc->p_comm, td->td_md.md_scb,
 	    (__cheri_fromcap void *)td->td_md.md_tls, td->td_md.md_tls_tcb_offset,
 	    peertd, peertd->td_proc->p_pid, peertd->td_proc->p_comm, peertd->td_md.md_scb,
-	    (__cheri_fromcap void *)peertd->td_md.md_tls, peertd->td_md.md_tls_tcb_offset);
+	    (__cheri_fromcap void *)peertd->td_md.md_tls, peertd->td_md.md_tls_tcb_offset,
+	    td->td_proc->p_sysent->sv_syscallnames[td->td_sa.code]);
 
 	/*
 	 * Assign our trapframe (userspace context) to the thread waiting

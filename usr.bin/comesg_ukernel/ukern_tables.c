@@ -44,7 +44,7 @@ const int COPORT_TBL_LEN = (MAX_COPORTS*sizeof(coport_tbl_entry_t));
 
 int lookup_port(char * port_name,sys_coport_t ** port_buf)
 {
-    int s = 0;
+    int s = 1;
     while(coport_table.add_in_progress)
     {
         if (s%10 == 0)
@@ -72,7 +72,7 @@ int lookup_port(char * port_name,sys_coport_t ** port_buf)
     else
     {
         *port_buf=NULL;
-        errno=ENOENT;
+        //errno=ENOENT;
     }
     return -1;
 }
@@ -82,7 +82,7 @@ int add_port(coport_tbl_entry_t entry)
 {
     int entry_index;
     int intval = 0;
-    int s=0;
+    int s=1;
     while(!atomic_compare_exchange_strong_explicit(&coport_table.add_in_progress,&intval,1,memory_order_acq_rel,memory_order_acquire))
     {
         intval=0;

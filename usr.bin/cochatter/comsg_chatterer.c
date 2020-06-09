@@ -211,6 +211,10 @@ void send_data(void)
 			if(error)
 				err(error,"send_data: lock output_lock failed");
 		}
+		else
+		{
+			sched_yield();
+		}
 		if (trace)
 		{
 			intval=1;
@@ -232,7 +236,10 @@ void send_data(void)
 			}
 		}
 		if(coport_type==COPIPE)
+		{
 			sched_yield();
+			sched_yield();
+		}
 		
 		clock_gettime(CLOCK_REALTIME,&start_timestamp);
 		statcounters_sample(&send_start);

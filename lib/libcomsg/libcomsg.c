@@ -73,6 +73,7 @@ struct _ports_tbl
     pentry_t entries[10];
 };
 
+#define benchmark
 //static struct _ports_tbl port_locked_table;
 
 int coopen(const char * coport_name, coport_type_t type, coport_t *prt)
@@ -129,31 +130,35 @@ coport_t coport_clearperm(coport_t p,int perms)
     perms&=CHERI_PERMS_SWALL; //prevent trashing the rest of the perms word, which is unrelated to coport access control
     return cheri_andperm(p,perms);
 }
-#ifdef benchmark
+
+
+
+
 static
-void benchmark(char * location)
+void benchmark_cosend(const char * location)
 {
-    static int i = 0;
     static statcounters_bank_t bankA;
     static statcounters_bank_t bankB;
-    statcounters_bank_t result;
+    static int i = 0;
+    statcounters_bank_t result_bank;
     if(!i)
     {
         printf("Start: %s\n",location);
         statcounters_sample(&bankA);
+        i=1;
         return;
     }
     else
     {
         statcounters_sample(&bankB);
         printf("%s: \n",location);
-        statcounters_diff(&result,&bankB,&bankA);
-        statcounters_dump(&result);
+        statcounters_diff(&result_bank,&bankB,&bankA);
+        statcounters_dump(&result_bank);
         bankA=bankB;
         return;
     }
 }
-#endif
+
 
 int cosend(const coport_t prt, const void * buf, size_t len)
 {
@@ -180,7 +185,7 @@ int cosend(const coport_t prt, const void * buf, size_t len)
     //assert(cheri_getperm(port) & COPORT_PERM_SEND); //doesn't work properly
     //assert(cheri_getsealed(port)!=0);
     #ifdef benchmark
-    benchmark
+    benchmark_cosend("entry");
     #endif
     //cherilen=CHERI_REPRESENTABLE_LEN(len);
     if(cheri_gettype(port)==libcomsg_otype)
@@ -193,6 +198,9 @@ int cosend(const coport_t prt, const void * buf, size_t len)
         type=COCARRIER;
     }
     //assert(cheri_gettag(port));
+    #ifdef benchmark
+    benchmark_cosend("switch");
+    #endif
     switch(type)
     {
         case COCHANNEL:
@@ -255,13 +263,22 @@ int cosend(const coport_t prt, const void * buf, size_t len)
 
             break;
         case COPIPE:
+            
             for(;;)
             {
-                
+                #ifdef benchmark
+                benchmark_cosend("status loop - test");
+                #endif
                 status_val=COPORT_READY;
-                if(atomic_compare_exchange_weak_explicit(&port->status,&status_val,COPORT_BUSY,memory_order_acq_rel,memory_order_acquire))
+                if (port->status==status_val)
                 {
-                    break;
+                    #ifdef benchmark
+                    benchmark_cosend("status loop - test and set");
+                    #endif
+                    if(atomic_compare_exchange_weak_explicit(&port->status,&status_val,COPORT_BUSY,memory_order_acq_rel,memory_order_acquire))
+                    {
+                        break;
+                    }
                 }
                 else
                 {
@@ -271,10 +288,15 @@ int cosend(const coport_t prt, const void * buf, size_t len)
                         //this context switch will eventually happen, so we skip some needless spinning this way
                         sched_yield(); 
                     }
+                    else if (!(i%30))
+                        sched_yield(); 
                     i++;
                 }
             }
-            out_buffer=atomic_load_explicit(&port->buffer,memory_order_acquire);
+            out_buffer=port->buffer;
+            #ifdef benchmark
+            benchmark_cosend("load buffer");
+            #endif
             if(!cheri_gettag(out_buffer))
                 err(EAGAIN,"cosend: copipe buffer was not a valid capability");
             if(cheri_getlen(out_buffer)<len)
@@ -284,7 +306,13 @@ int cosend(const coport_t prt, const void * buf, size_t len)
                 return -1;
             }
             memcpy(out_buffer,buf,len);
+            #ifdef benchmark
+            benchmark_cosend("memcpy");
+            #endif
             atomic_store_explicit(&port->status,COPORT_DONE,memory_order_release);
+            #ifdef benchmark
+            benchmark_cosend("clear status");
+            #endif
             break;
         default:
             errno=EINVAL;
@@ -389,9 +417,12 @@ int corecv(const coport_t prt, void ** buf, size_t len)
             for(;;)
             {
                 status_val=COPORT_OPEN;
-                if(atomic_compare_exchange_strong_explicit(&port->status,&status_val,COPORT_BUSY,memory_order_acq_rel,memory_order_acquire))
+                if(port->status==status_val || !multicore)
                 {
-                    break;
+                    if(atomic_compare_exchange_strong_explicit(&port->status,&status_val,COPORT_BUSY,memory_order_acq_rel,memory_order_acquire))
+                    {
+                        break;
+                    }
                 }
                 else
                 {
@@ -401,15 +432,18 @@ int corecv(const coport_t prt, void ** buf, size_t len)
                         //this context switch will eventually happen, so we skip some needless spinning this way
                         sched_yield(); 
                     }
+                    else if (!(i%30))
+                        sched_yield(); 
                     i++;
                 }
             }
             atomic_store_explicit(&port->buffer, *buf, memory_order_release);
             atomic_store_explicit(&port->status, COPORT_READY, memory_order_release);
             i=0;
-            while(atomic_load_explicit(&port->status,memory_order_acquire)!=COPORT_DONE)
+
+            while(port->status!=COPORT_DONE)
             {
-                if(!(i%10) && !multicore)
+                if(!(i%10))
                 {
                         //at this point, as long as we are the scheduled thread it won't become ready, so yield the cpu
                         //this context switch will eventually happen, so we skip some needless spinning this way
@@ -580,5 +614,7 @@ void libcomsg_init(void)
     sysctl(mib, 2, &cores, &len, NULL, 0);
     if (cores>1)
         multicore=1;
-    
+    #if 1
+    multicore=0;
+    #endif
 }

@@ -4,16 +4,13 @@ LIB=	comsg
 
 SRCS=	libcomsg.c		\
 	coproc.c		\
-	commap.c		\
-	statcounters.c		
+	commap.c		
+	
 
 INCS=	comsg.h 		\
 	coproc.h	\
 	coport.h	\
-	sys_comsg.h	\
-	statcounters.h	\
-	statcounters_mips.h	\
-	statcounters_mips.inc
+	sys_comsg.h	
 
 INCSDIR=	${INCLUDEDIR}/cheri
 

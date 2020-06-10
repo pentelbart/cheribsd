@@ -48,8 +48,9 @@
 #include "coproc.h"
 #include "coport.h"
 #include "comsg.h"
+#ifdef benchmark
 #include "statcounters.h"
-
+#endif
 #define LIBCOMSG_OTYPE 1
 //Sealing root
 static void * __capability libcomsg_sealroot;
@@ -73,7 +74,6 @@ struct _ports_tbl
     pentry_t entries[10];
 };
 
-#define benchmark
 //static struct _ports_tbl port_locked_table;
 
 int coopen(const char * coport_name, coport_type_t type, coport_t *prt)
@@ -132,33 +132,34 @@ coport_t coport_clearperm(coport_t p,int perms)
 }
 
 
-
-
+#ifdef benchmark
 static
 void benchmark_cosend(const char * location)
 {
     static statcounters_bank_t bankA;
-    static statcounters_bank_t bankB;
     static int i = 0;
-    statcounters_bank_t result_bank;
+    //static int cyclesonly = 0;
+    //static int cyclesA, cyclesB;
+    statcounters_bank_t result_bank, bankB;
+    
     if(!i)
     {
         printf("Start: %s\n",location);
-        statcounters_sample(&bankA);
         i=1;
+        statcounters_sample(&bankA);
         return;
     }
     else
     {
-        statcounters_sample(&bankB);
+        statcounters_sample_end(&bankB);
         printf("%s: \n",location);
         statcounters_diff(&result_bank,&bankB,&bankA);
         statcounters_dump(&result_bank);
-        bankA=bankB;
+        statcounters_sample(&bankA);
         return;
     }
 }
-
+#endif
 
 int cosend(const coport_t prt, const void * buf, size_t len)
 {
@@ -181,6 +182,9 @@ int cosend(const coport_t prt, const void * buf, size_t len)
     wait.tv_sec=0;
     wait.tv_nsec=100;
     int i = 1;
+
+    if(len==0)
+        return 0;
     
     //assert(cheri_getperm(port) & COPORT_PERM_SEND); //doesn't work properly
     //assert(cheri_getsealed(port)!=0);
@@ -206,9 +210,29 @@ int cosend(const coport_t prt, const void * buf, size_t len)
         case COCHANNEL:
             for(;;)
             {
+                #ifdef benchmark
+                benchmark_cosend("status loop - test and set");
+                #endif
                 status_val=COPORT_OPEN;
                 if(atomic_compare_exchange_weak_explicit(&port->status,&status_val,COPORT_BUSY,memory_order_acq_rel,memory_order_acquire))
                     break;
+                else if(!(i%10) && !multicore)
+                {
+                    //at this point, as long as we are the scheduled thread it won't become ready, so yield the cpu
+                    //this context switch will eventually happen, so we skip some needless spinning this way
+                    sched_yield(); 
+                    #ifdef benchmark
+                    benchmark_cosend("status loop - yield A");
+                    #endif
+                }
+                else if (!(i%30))
+                {
+                    sched_yield(); 
+                    #ifdef benchmark
+                    benchmark_cosend("status loop - yield B");
+                    #endif
+                }
+                i++;
             }
             atomic_thread_fence(memory_order_acquire);
             unread=(port->end-port->start)%port->length;
@@ -266,19 +290,13 @@ int cosend(const coport_t prt, const void * buf, size_t len)
             
             for(;;)
             {
-                #ifdef benchmark
-                benchmark_cosend("status loop - test");
-                #endif
                 status_val=COPORT_READY;
-                if (port->status==status_val)
+                #ifdef benchmark
+                benchmark_cosend("status loop - test and set");
+                #endif
+                if(atomic_compare_exchange_weak_explicit(&port->status,&status_val,COPORT_BUSY,memory_order_acq_rel,memory_order_acquire))
                 {
-                    #ifdef benchmark
-                    benchmark_cosend("status loop - test and set");
-                    #endif
-                    if(atomic_compare_exchange_weak_explicit(&port->status,&status_val,COPORT_BUSY,memory_order_acq_rel,memory_order_acquire))
-                    {
-                        break;
-                    }
+                    break;
                 }
                 else
                 {
@@ -287,10 +305,19 @@ int cosend(const coport_t prt, const void * buf, size_t len)
                         //at this point, as long as we are the scheduled thread it won't become ready, so yield the cpu
                         //this context switch will eventually happen, so we skip some needless spinning this way
                         sched_yield(); 
+                        #ifdef benchmark
+                        benchmark_cosend("status loop - yield A");
+                        #endif
                     }
                     else if (!(i%30))
+                    {
                         sched_yield(); 
+                        #ifdef benchmark
+                        benchmark_cosend("status loop - yield B");
+                        #endif
+                    }
                     i++;
+                    
                 }
             }
             out_buffer=port->buffer;
@@ -299,12 +326,18 @@ int cosend(const coport_t prt, const void * buf, size_t len)
             #endif
             if(!cheri_gettag(out_buffer))
                 err(EAGAIN,"cosend: copipe buffer was not a valid capability");
+            #ifdef benchmark
+            benchmark_cosend("tag check");
+            #endif
             if(cheri_getlen(out_buffer)<len)
             {
                 err(EMSGSIZE,"cosend: recipient buffer len %lu too small for message of length %lu",cheri_getlen(out_buffer),len);
                 errno=EINVAL;
                 return -1;
             }
+            #ifdef benchmark
+            benchmark_cosend("len check");
+            #endif
             memcpy(out_buffer,buf,len);
             #ifdef benchmark
             benchmark_cosend("memcpy");
@@ -340,6 +373,9 @@ int corecv(const coport_t prt, void ** buf, size_t len)
     
     //assert(cheri_getperm(port)&COPORT_PERM_RECV); //doesn't work
     //assert(cheri_getsealed(port)!=0);
+    if(len==0)
+        return 0;
+    
     if(cheri_gettype(port)!=libcomsg_otype)
     {
         type=COCARRIER;
@@ -361,6 +397,9 @@ int corecv(const coport_t prt, void ** buf, size_t len)
                 {
                     break;
                 }
+                if (!(i%30))
+                    sched_yield(); 
+                i++;
             }
             atomic_thread_fence(memory_order_acquire);
             if (port->start==port->length)

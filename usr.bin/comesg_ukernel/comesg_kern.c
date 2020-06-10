@@ -456,7 +456,7 @@ void *coport_open(void *args)
         /* check if port exists */
         /* if it doesn't, we need to be sure we don't get into a race to create it */
 
-        lookup=lookup_port(port_name,&prt);
+        lookup=lookup_port(port_name,&prt,coport_args->args.type);
         if(lookup==-1)
         {
             
@@ -472,7 +472,7 @@ void *coport_open(void *args)
             init_coport_table_entry(&table_entry,port,port_name);
             table_entry.port=port;
             table_entry.id=generate_id();
-            strcpy(table_entry.name,coport_args->args.name);
+           // strcpy(table_entry.name,coport_args->args.name);
             index=add_port(table_entry);
             //printf("coport %s added to table\n",coport_args->args.name);
             prt=cheri_setbounds(&coport_table.table[index].port,sizeof(sys_coport_t));
@@ -577,8 +577,8 @@ int main(int argc, const char *argv[])
     printf("Initial setup complete.\n");
 
     /* perform setup */
-    printf("Press enter to proceed\n");
-    while( getchar() != '\n');
+    //printf("Press enter to proceed\n");
+    //while( getchar() != '\n');
     pthread_create(&commap_manager,&thread_attrs,ukern_mmap,NULL);
     printf("Spawning co-open listeners...\n");
     error+=spawn_workers(&coport_open,coopen_threads,U_COOPEN);

@@ -148,6 +148,7 @@ void send_data(void)
 	sleepytime.tv_nsec=100;
 	float ipc_time;
 	int status;
+	size_t remaining_len = total_size;
 	
 	static char * name = NULL;
 	if(name == NULL)
@@ -233,6 +234,12 @@ void send_data(void)
 			for(unsigned int j = 0; j<(total_size/4096); j++)
 			{
 				status=cosend(port,message_str,4096);
+				if(status==-1)
+					sched_yield();
+				else if(remaining_len<4096 || status==0)
+					break;		
+				else
+					remaining_len-=4096;
 			}
 		}
 		if(coport_type==COPIPE)
@@ -240,7 +247,7 @@ void send_data(void)
 			sched_yield();
 			sched_yield();
 		}
-		
+		remaining_len=total_size;
 		clock_gettime(CLOCK_REALTIME,&start_timestamp);
 		statcounters_sample(&send_start);
 		if (coport_type!=COCHANNEL)
@@ -254,10 +261,16 @@ void send_data(void)
 		{
 			for(unsigned int j = 0; j<(total_size/4096); j++)
 			{
-				status=cosend(port,message_str,4096);
+				status=cosend(port,message_str,MIN(remaining_len,4096));
+				if(status==-1)
+					sched_yield();
+				else if(remaining_len<4096 || status==0)
+					break;		
+				else
+					remaining_len-=4096;
 			}
 		}
-		statcounters_sample(&bank2);
+		statcounters_sample_end(&bank2);
 		clock_gettime(CLOCK_REALTIME,&end_timestamp);
 		
 		if (trace)
@@ -348,6 +361,7 @@ void receive_data(void)
 	struct timespec start_timestamp,end_timestamp;
 	float ipc_time;
 	int status;
+	size_t remaining_len = message_len;
 
 	static char * name = NULL;
 	if(name == NULL)
@@ -448,6 +462,14 @@ void receive_data(void)
 			for(unsigned int j = 0; j<(total_size/4096); j++)
 			{
 				status=corecv(port,(void **)&buffer,4096);
+				if(status==-1)
+					sched_yield();
+				else if(remaining_len<4096 || status==0)
+					break;		
+				else
+					remaining_len-=4096;
+				
+
 			}
 		}
 		else
@@ -457,14 +479,20 @@ void receive_data(void)
 				status=corecv(port,(void **)&buffer,message_len);
 			}
 		}
-		
+		remaining_len=total_size;
 		clock_gettime(CLOCK_REALTIME,&start_timestamp);
 		statcounters_sample(&bank1);
 		if (coport_type==COCHANNEL)
 		{
 			for(unsigned int j = 0; j<(total_size/4096); j++)
 			{
-				status=corecv(port,(void **)&buffer,4096);
+				status=corecv(port,(void **)&buffer,MIN(remaining_len,4096));
+				if(status==-1)
+					sched_yield();
+				else if(remaining_len<4096 || status==0)
+					break;		
+				else
+					remaining_len-=4096;
 			}
 		}
 		else
@@ -474,7 +502,7 @@ void receive_data(void)
 				status=corecv(port,(void **)&buffer,message_len);
 			}
 		}
-		statcounters_sample(&recv_end);
+		statcounters_sample_end(&recv_end);
 		clock_gettime(CLOCK_REALTIME,&end_timestamp);
 
 		if(coport_type!=COPIPE)
@@ -635,6 +663,7 @@ void *do_recv(void* args)
 	switching_types++;
 	receive_data();
 	done++;
+	pthread_mutex_lock(&output_lock);
 	exit(0);
 	return args;
 }

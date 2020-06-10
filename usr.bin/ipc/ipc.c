@@ -44,6 +44,11 @@
 #endif
 #ifdef WITH_STATCOUNTERS
 #include <statcounters.h>
+#include <pthread_np.h>
+#include <stdatomic.h>
+#endif
+#ifdef WITH_QTRACE
+#include <cheri/cheri.h>
 #endif
 #include <pthread.h>
 #include <stdio.h>
@@ -117,6 +122,9 @@ static size_t totalsize = TOTALSIZE;	/* total I/O size */
 #define	max(x, y)	((x) > (y) ? (x) : (y))
 #define	min(x, y)	((x) < (y) ? (x) : (y))
 
+#ifdef WITH_QTRACE
+static int qtrace = 0;
+#endif
 #ifdef WITH_PMC
 #define	COUNTERSET_MAX_EVENTS	4	/* Maximum hardware registers */
 
@@ -348,25 +356,11 @@ benchmark_pmc_to_string(int type)
 
 #ifdef WITH_STATCOUNTERS
 
+static cpuset_t recv_cpu_set = CPUSET_T_INITIALIZER(CPUSET_FSET);
+static cpuset_t send_cpu_set = CPUSET_T_INITIALIZER(CPUSET_FSET);
 static int benchmark_statcounters = 0;
-static statcounters_bank_t start_bank, end_bank, result;
-
-inline static void statcounters_begin(void)
-{
-	if (benchmark_statcounters)
-	{
-		statcounters_sample(&start_bank);
-	}
-}
-
-inline static void statcounters_end(void)
-{
-	if (benchmark_statcounters)
-	{
-		statcounters_sample(&end_bank);
-	}
-}
-
+static statcounters_bank_t send_start, send_end;
+static statcounters_bank_t recv_start, recv_end;
 
 #endif
 
@@ -464,7 +458,7 @@ usage(void)
   "    -P l1d|l1i|l2|mem|tlb|axi  Enable hardware performance counters\n"
 #endif
 #ifdef WITH_STATCOUNTERS
-  "    -S                     Enable libstatcounters provided PMCs"
+  "    -S                     Enable libstatcounters provided PMCs\n"
 #endif
   "    -q                     Just run the benchmark, don't print stuff out\n"
   "    -s                     Set send/receive socket-buffer sizes to buffersize\n"
@@ -519,7 +513,12 @@ sender(struct sender_argument *sap)
 		pmc_begin();
 #endif
 #ifdef WITH_STATCOUNTERS
-	statcounters_begin();
+	statcounters_reset();
+	statcounters_sample(&send_start);
+#endif
+#ifdef WITH_QTRACE
+	if(qtrace)
+		CHERI_START_TRACE;
 #endif
 	/*
 	 * HERE BEGINS THE BENCHMARK (2-thread/2-proc).
@@ -537,6 +536,9 @@ sender(struct sender_argument *sap)
 			err(EX_IOERR, "FAIL: write");
 		write_sofar += len;
 	}
+#ifdef WITH_STATCOUNTERS
+	statcounters_sample_end(&send_end);
+#endif
 }
 
 static struct timespec
@@ -546,6 +548,10 @@ receiver(int readfd, size_t blockcount, void *buf)
 	size_t len;
 	size_t read_sofar;
 
+#ifdef WITH_STATCOUNTERS
+
+	statcounters_sample(&recv_start);
+#endif
 	read_sofar = 0;
 	/** read() always returns as soon as there is something to read,
 	 * i.e. one pipe/socket buffer size. Make sure we use the whole buffer */
@@ -566,7 +572,11 @@ receiver(int readfd, size_t blockcount, void *buf)
 	 * HERE ENDS THE BENCHMARK (2-thread/2-proc).
 	 */
 #ifdef WITH_STATCOUNTERS
-	statcounters_end();
+	statcounters_sample_end(&recv_end);
+#endif
+#ifdef WITH_QTRACE
+	if(qtrace)
+		CHERI_STOP_TRACE;
 #endif
 #ifdef WITH_PMC
 	if (benchmark_pmc != BENCHMARK_PMC_NONE)
@@ -582,7 +592,6 @@ static void *
 second_thread(void *arg)
 {
 	struct sender_argument *sap = arg;
-
 	if (!Bflag)
 		sleep(1);
 	sender(sap);
@@ -601,7 +610,16 @@ do_2thread(int readfd, int writefd, size_t blockcount, void *readbuf,
 {
 	struct timespec finishtime;
 	pthread_t thread;
+	pthread_attr_t send_attr;
 
+	pthread_attr_init(&send_attr);
+
+#ifdef WITH_STATCOUNTERS
+	
+	
+	pthread_attr_setaffinity_np(&send_attr, sizeof(cpuset_t), &send_cpu_set);
+	
+#endif
 	/*
 	 * We can just use ordinary shared memory between the two threads --
 	 * no need to do anything special.
@@ -609,7 +627,7 @@ do_2thread(int readfd, int writefd, size_t blockcount, void *readbuf,
 	sa.sa_writefd = writefd;
 	sa.sa_blockcount = blockcount;
 	sa.sa_buffer = writebuf;
-	if (pthread_create(&thread, NULL, second_thread, &sa) < 0)
+	if (pthread_create(&thread, &send_attr, second_thread, &sa) < 0)
 		err(EX_OSERR, "FAIL: pthread_create");
 	finishtime = receiver(readfd, blockcount, readbuf);
 	if (pthread_join(thread, NULL) < 0)
@@ -641,11 +659,16 @@ do_2proc(int readfd, int writefd, size_t blockcount, void *readbuf,
 	sap->sa_buffer = writebuf;
 	pid = fork();
 	if (pid == 0) {
+
 		if (!Bflag)
 			sleep(1);
 		sender(sap);
 		if (!Bflag)
 			sleep(1);
+		statcounters_diff(&send_end, &send_end, &send_start);
+		printf("\n");
+		printf("Sender Statcount:\n");
+		statcounters_dump(&send_end);
 		_exit(0);
 	}
 	finishtime = receiver(readfd, blockcount, readbuf);
@@ -677,6 +700,9 @@ do_1thread(int readfd, int writefd, size_t blockcount, void *readbuf,
 	size_t read_sofar, write_sofar;
 	size_t len_read, len_write;
 	int flags;
+#ifdef WITH_STATCOUNTERS
+	statcounters_reset();
+#endif
 
 	flags = fcntl(readfd, F_GETFL, 0);
 	if (flags < 0)
@@ -703,7 +729,7 @@ do_1thread(int readfd, int writefd, size_t blockcount, void *readbuf,
 		pmc_begin();
 #endif
 #ifdef WITH_STATCOUNTERS
-	statcounters_begin();
+	statcounters_sample(&send_start);
 #endif
 
 	/*
@@ -754,7 +780,7 @@ do_1thread(int readfd, int writefd, size_t blockcount, void *readbuf,
 	 * HERE ENDS THE BENCHMARK (1-thread).
 	 */
 #ifdef WITH_STATCOUNTERS
-	statcounters_end();
+	statcounters_sample_end(&send_end);
 #endif
 #ifdef WITH_PMC
 	if (benchmark_pmc != BENCHMARK_PMC_NONE)
@@ -778,6 +804,12 @@ ipc(void)
 	double secs, rate;
 #ifdef WITH_PMC
 	uint64_t clock_cycles, instr_executed, counter0, counter1;
+#endif
+
+#ifdef WITH_STATCOUNTERS
+	CPU_CLR(CPU_FFS(&send_cpu_set)-1,&send_cpu_set);
+	CPU_CLR(CPU_FFS(&send_cpu_set)-1,&recv_cpu_set);
+	pthread_setaffinity_np(pthread_self(), sizeof(cpuset_t), &recv_cpu_set);
 #endif
 
 	if (totalsize % buffersize != 0)
@@ -995,10 +1027,19 @@ ipc(void)
 		}
 
 #ifdef WITH_STATCOUNTERS
-		if (benchmark_statcounters)
+		if (benchmark_statcounters && benchmark_mode!=BENCHMARK_MODE_2PROC)
 		{
-			statcounters_diff(&result, &end_bank, &start_bank);
-			statcounters_dump(&result);
+			statcounters_diff(&send_end, &send_end, &send_start);
+			printf("\n");
+			printf("Sender Statcount:\n");
+			statcounters_dump(&send_end);
+			if(benchmark_mode==BENCHMARK_MODE_2THREAD && ipc_type!=BENCHMARK_IPC_PIPE)
+			{
+				printf("\n");
+				printf("Receiver Statcount:\n");
+				statcounters_diff(&recv_end,&recv_end,&recv_start);
+				statcounters_dump(&recv_end);
+			}
 		}
 #endif
 
@@ -1076,7 +1117,7 @@ main(int argc, char *argv[])
 
 	buffersize = BUFFERSIZE;
 	totalsize = TOTALSIZE;
-	while ((ch = getopt(argc, argv, "Bb:i:p:P:qst:v"
+	while ((ch = getopt(argc, argv, "Bb:i:p:P:qst:vSQ"
 #ifdef WITH_PMC
 	"P:"
 #endif
@@ -1119,7 +1160,11 @@ main(int argc, char *argv[])
 			benchmark_statcounters = 1;
 			break;
 #endif
-
+#ifdef WITH_QTRACE
+		case 'Q':
+			qtrace = 1;
+			break;
+#endif
 		case 'q':
 			qflag++;
 			break;

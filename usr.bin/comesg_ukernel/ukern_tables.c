@@ -42,7 +42,7 @@ coport_tbl_t coport_table;
 
 const int COPORT_TBL_LEN = (MAX_COPORTS*sizeof(coport_tbl_entry_t));
 
-int lookup_port(char * port_name,sys_coport_t ** port_buf)
+int lookup_port(char * port_name,sys_coport_t ** port_buf,coport_type_t type)
 {
     int s = 1;
     while(coport_table.add_in_progress)
@@ -58,16 +58,24 @@ int lookup_port(char * port_name,sys_coport_t ** port_buf)
     {
         if(strncmp(port_name,coport_table.table[i].name,COPORT_NAME_LEN)==0)
         {
-            *port_buf=coport_table.table[i].port_cap;
-            atomic_fetch_add(&coport_table.lookup_in_progress,-1);
-            return 0;
+            if(coport_table.table[i].port.type!=type && type!=INVALID)
+            {
+                *port_buf=NULL;
+                return -1;
+            }
+            else
+            {
+                *port_buf=coport_table.table[i].port_cap;
+                atomic_fetch_add(&coport_table.lookup_in_progress,-1);
+                return 0;
+            }
         }
     }
     atomic_fetch_add(&coport_table.lookup_in_progress,-1);
     //restart operation if something started writing to the table while we were reading it
     if(coport_table.add_in_progress)
     {
-        return lookup_port(port_name,port_buf);
+        return lookup_port(port_name,port_buf,type);
     }
     else
     {

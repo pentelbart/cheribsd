@@ -669,6 +669,7 @@ do_2proc(int readfd, int writefd, size_t blockcount, void *readbuf,
 		printf("\n");
 		printf("Sender Statcount:\n");
 		statcounters_dump(&send_end);
+
 		_exit(0);
 	}
 	finishtime = receiver(readfd, blockcount, readbuf);
@@ -990,10 +991,13 @@ ipc(void)
 	 * execution time from just before first byte sent to just after last
 	 * byte received.
 	 */
+	char * fname = malloc(100);
+	FILE* f;
 	switch (benchmark_mode) {
 	case BENCHMARK_MODE_1THREAD:
 		ts = do_1thread(readfd, writefd, blockcount, readbuf,
 		    writebuf);
+
 		break;
 
 	case BENCHMARK_MODE_2THREAD:
@@ -1008,7 +1012,7 @@ ipc(void)
 	default:
 		assert(0);
 	}
-
+	
 	/*
 	 * Now we can disruptively print things -- if we're not in quiet mode.
 	 */
@@ -1025,23 +1029,6 @@ ipc(void)
 			printf("  time: %jd.%09jd\n", (intmax_t)ts.tv_sec,
 			    (intmax_t)ts.tv_nsec);
 		}
-
-#ifdef WITH_STATCOUNTERS
-		if (benchmark_statcounters && benchmark_mode!=BENCHMARK_MODE_2PROC)
-		{
-			statcounters_diff(&send_end, &send_end, &send_start);
-			printf("\n");
-			printf("Sender Statcount:\n");
-			statcounters_dump(&send_end);
-			if(benchmark_mode==BENCHMARK_MODE_2THREAD && ipc_type!=BENCHMARK_IPC_PIPE)
-			{
-				printf("\n");
-				printf("Receiver Statcount:\n");
-				statcounters_diff(&recv_end,&recv_end,&recv_start);
-				statcounters_dump(&recv_end);
-			}
-		}
-#endif
 
 #ifdef WITH_PMC
 		if (benchmark_pmc != BENCHMARK_PMC_NONE) {
@@ -1096,6 +1083,40 @@ ipc(void)
 		rate /= (1024);
 
 		printf("%.2F KBytes/sec\n", rate);
+
+#ifdef WITH_STATCOUNTERS
+		char * bw_str = malloc(40);
+
+		sprintf(fname,"/root/%s_b%ld_t%ld_%s.dat",ipc_type_to_string(ipc_type),buffersize,totalsize,benchmark_mode_to_string(benchmark_mode));
+		sprintf(bw_str,"%.2F",rate);
+		if (benchmark_statcounters && benchmark_mode!=BENCHMARK_MODE_2PROC)
+		{
+			statcounters_diff(&send_end, &send_end, &send_start);
+			printf("\n");
+			printf("Sender Statcount:\n");
+			statcounters_dump(&send_end);
+			if((f= fopen(fname,"r")))
+			{
+				fclose(f);
+				f= fopen(fname,"a+");
+				statcounters_dump_with_args(&send_end,"ipc","",bw_str,f,CSV_NOHEADER);
+			}
+			else
+			{
+				f= fopen(fname,"a+");
+				statcounters_dump_with_args(&send_end,"ipc","",bw_str,f,CSV_HEADER);
+			}
+			fclose(f);
+			
+			if(benchmark_mode==BENCHMARK_MODE_2THREAD && ipc_type!=BENCHMARK_IPC_PIPE)
+			{
+				printf("\n");
+				printf("Receiver Statcount:\n");
+				statcounters_diff(&recv_end,&recv_end,&recv_start);
+				statcounters_dump(&recv_end);
+			}
+		}
+#endif
 	}
 	close(readfd);
 	close(writefd);

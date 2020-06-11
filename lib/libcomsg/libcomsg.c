@@ -175,6 +175,7 @@ int cosend(const coport_t prt, const void * buf, size_t len)
     unsigned int old_end;
     int retval = len;
     unsigned long unread;
+    size_t port_size, port_start;
     coport_status_t status_val;
     coport_type_t type;
 
@@ -208,6 +209,13 @@ int cosend(const coport_t prt, const void * buf, size_t len)
     switch(type)
     {
         case COCHANNEL:
+            port_size=port->length;
+            if(len>port_size)
+            {
+                errno=EWOULDBLOCK;
+                //warn("cosend: message (%luB) too big for buffer",len);
+                return -1;
+            }
             for(;;)
             {
                 #ifdef benchmark
@@ -234,33 +242,38 @@ int cosend(const coport_t prt, const void * buf, size_t len)
                 }
                 i++;
             }
-            atomic_thread_fence(memory_order_acquire);
-            unread=(port->end-port->start)%port->length;
-            if((port->length-unread)<len)
+            port_start=atomic_load_explicit(&port->start,memory_order_acquire);
+            old_end=atomic_load_explicit(&port->end,memory_order_acquire);
+            unread=(old_end-port_start)%port_size;
+
+            if((port_size-unread)<len)
             {
                 errno=EAGAIN;
-                warn("cosend: message (%luB) too big/buffer (%luB) is full (%luB)",len,port->length,unread);
+                warn("cosend: message (%luB) too big/buffer (%luB) is full (%luB)",len,port_size,unread);
                 atomic_store_explicit(&port->status,COPORT_OPEN,memory_order_release);
                 return -1;
             }
-            old_end=port->end;
-            port->end=(port->end+len)%port->length;
-            if(old_end+len>port->length)
+            if(old_end==port_size)
+                old_end=0;
+            if(port_start==port_size)
+                atomic_store_explicit(&port->start,0,memory_order_release);
+           
+            atomic_store_explicit(&port->end,(old_end+len)%(port_size+1),memory_order_release);
+            if(old_end+len>port_size)
             {
-                memcpy((char *)port->buffer+old_end, buf, port->length-old_end);
-                memcpy((char *)port->buffer+old_end, (const char *)buf+port->length-old_end, (old_end+len)%port->length);
+                memcpy((char *)port->buffer+old_end, buf, port_size-old_end);
+                memcpy((char *)port->buffer, (const char *)buf+(port_size-old_end), (old_end+len)%(port_size+1));
             }
             else
             {
                 memcpy((char *)port->buffer+old_end, buf, len);
             }
             port->event|=COPOLL_IN;
-            if ((port->end-port->start)%port->length==port->length)
+            if ((old_end+len-port_start)%port_size==(port_size-1))
             {
                 port->event&=~COPOLL_OUT;
             }
-            port->status=COPORT_OPEN;
-            atomic_thread_fence(memory_order_release);
+            atomic_store_explicit(&port->status,COPORT_OPEN,memory_order_release);
             break;
         case COCARRIER:
             call.cocarrier=port;
@@ -360,13 +373,14 @@ int corecv(const coport_t prt, void ** buf, size_t len)
 {
     //we need more atomicity on changes to end
     coport_t port = prt;
-    int old_start;
+    size_t old_start;
     void * __capability switcher_code;
     void * __capability switcher_data;
     void * __capability func;
     cocall_cocarrier_send_t call;
     coport_status_t status_val;
     coport_type_t type;
+    size_t port_size,port_end;
     uint i=0;
     int retval = len;
     size_t cherilen=CHERI_REPRESENTABLE_LENGTH(len);
@@ -383,17 +397,21 @@ int corecv(const coport_t prt, void ** buf, size_t len)
     else
     {
         port=cheri_unseal(port,libcomsg_sealroot);
-        type=port->type;
-        
+        type=port->type; 
     }
     switch(type)
     {
         case COCHANNEL:
-            
+            port_size=atomic_load_explicit(&port->length,memory_order_acquire);
+            if(port_size<len)
+            {
+                err(EMSGSIZE,"corecv: expected message length %lu larger than buffer", len);
+                return -1;
+            }
             for(;;)
             {
                 status_val=COPORT_OPEN;
-                if(atomic_compare_exchange_weak_explicit(&port->status,&status_val,COPORT_BUSY,memory_order_acq_rel,memory_order_acquire))
+                if(atomic_compare_exchange_strong_explicit(&port->status,&status_val,COPORT_BUSY,memory_order_acq_rel,memory_order_acquire))
                 {
                     break;
                 }
@@ -401,30 +419,38 @@ int corecv(const coport_t prt, void ** buf, size_t len)
                     sched_yield(); 
                 i++;
             }
-            atomic_thread_fence(memory_order_acquire);
-            if (port->start==port->length)
+            old_start=atomic_load_explicit(&port->start,memory_order_acquire);
+            port_end=atomic_load_explicit(&port->end,memory_order_acquire);
+            if (old_start==port_end)
             {
-                err(EAGAIN,"corecv: no message to receive");
-            }
-            if(port->length<len)
-            {
-                err(EMSGSIZE,"corecv: expected message length %lu larger than buffer", len);
+                //warn("corecv: no message to receive");
+                errno=EAGAIN;
+                atomic_store_explicit(&port->status,COPORT_OPEN,memory_order_release);
+                return -1;
             }
             if(!cheri_gettag(port->buffer))
             {
-                err(EPIPE,"corecv: coport is closed");
+                warn("corecv: coport is closed");
+                errno=EPIPE;
+                atomic_store_explicit(&port->status,COPORT_OPEN,memory_order_release);
+                return -1;
             }
-            old_start=port->start;
-            port->start=port->start+len;
-            memcpy(*buf,(char *)port->buffer+old_start, len);
-            port->start=port->start+len;
+            if(old_start==port_size)
+                old_start=0;
+            atomic_store_explicit(&port->start,(old_start+len)%(port_size+1),memory_order_release);
+
+            if(old_start+len>port_size)
+            {
+                memcpy(*buf, (char *)port->buffer+old_start, port_size-old_start);
+                memcpy((char *)*buf+(port_size-old_start), (char *)port->buffer, (old_start+len)%(port_size+1));
+            }
+            else
+                memcpy(*buf,(char *)port->buffer+old_start, len);
+
             port->event|=COPOLL_OUT;
             if (port->end==port->start)
-            {
                 port->event&=~COPOLL_IN;
-            }
-            port->status=COPORT_OPEN;
-            atomic_thread_fence(memory_order_release);
+            atomic_store_explicit(&port->status,COPORT_OPEN,memory_order_release);
             break;
         case COCARRIER:
             call.cocarrier=port;
@@ -448,8 +474,7 @@ int corecv(const coport_t prt, void ** buf, size_t len)
                 {
                     err(1,"corecv: received capability does not grant read permissions");
                 }
-                memcpy(*buf,call.message,MIN(cheri_getlen(buf),MIN(cheri_getlen(call.message),len)));
-            
+                *buf=call.message;
             }
             break;
         case COPIPE:

@@ -190,6 +190,7 @@ void send_data(void)
 	f = fopen(name,"a+");
 	if(coport_type==COPIPE && 0)
 		set_sched();
+	status=coopen(port_name,coport_type,&port);
 	for(unsigned long i = 0; i<runs; i++){
 		
 		sleepytime.tv_sec=0;
@@ -199,7 +200,7 @@ void send_data(void)
 			sched_yield();
 			sched_yield();
 		}
-		status=coopen(port_name,coport_type,&port);
+		
 		statcounters_zero(&send_start);
 		statcounters_zero(&bank2);
 		statcounters_zero(&result);
@@ -208,6 +209,7 @@ void send_data(void)
 		{
 			while(pthread_mutex_trylock(&async_lock))
 				sched_yield();
+			
 			error=pthread_mutex_lock(&output_lock); //keep it quiet during
 			if(error)
 				err(error,"send_data: lock output_lock failed");
@@ -231,16 +233,7 @@ void send_data(void)
 		}
 		else
 		{
-			for(unsigned int j = 0; j<(total_size/4096); j++)
-			{
-				status=cosend(port,message_str,4096);
-				if(status==-1)
-					sched_yield();
-				else if(remaining_len<4096 || status==0)
-					break;		
-				else
-					remaining_len-=4096;
-			}
+			status=cosend(port,message_str,MIN(remaining_len,4096));
 		}
 		if(coport_type==COPIPE)
 		{
@@ -258,21 +251,11 @@ void send_data(void)
 			}
 		}
 		else
-		{
-			for(unsigned int j = 0; j<(total_size/4096); j++)
-			{
-				status=cosend(port,message_str,MIN(remaining_len,4096));
-				if(status==-1)
-					sched_yield();
-				else if(remaining_len<4096 || status==0)
-					break;		
-				else
-					remaining_len-=4096;
-			}
+		{			
+			status=cosend(port,message_str,MIN(remaining_len,4096));
 		}
 		statcounters_sample_end(&bank2);
 		clock_gettime(CLOCK_REALTIME,&end_timestamp);
-		
 		if (trace)
 		{
 			intval=0;
@@ -288,7 +271,7 @@ void send_data(void)
 		}
 		else if (coport_type==COCHANNEL)
 		{
-			while(pthread_mutex_unlock(&async_lock));
+			while(!pthread_mutex_unlock(&async_lock));
 		}
 		sched_yield();
 		error=pthread_mutex_lock(&output_lock);
@@ -312,7 +295,7 @@ void send_data(void)
 		
 		ipc_time=(float)end_timestamp.tv_sec + (float)end_timestamp.tv_nsec / 1000000000;
 		
-		printf("Sent %lu bytes in %lf\n", total_size, ipc_time);
+		printf("Sent %lu bytes in %f\n", total_size, ipc_time);
 		printf("%.2FKB/s\n",(((total_size)/ipc_time)/1024.0));
 		//printf("Sent %lu bytes\n", total_size);
 		char * bw_str = malloc(100);
@@ -320,9 +303,9 @@ void send_data(void)
 		
 		//statcounters_dump_with_args calls fclose
 		if(i==0)
-			statcounters_dump_with_args(&result,"COSEND",bw_str,arch_name,f,CSV_HEADER);
+			statcounters_dump_with_args(&result,"COSEND",arch_name,bw_str,f,CSV_HEADER);
 		else
-			statcounters_dump_with_args(&result,"COSEND",bw_str,arch_name,f,CSV_NOHEADER);		
+			statcounters_dump_with_args(&result,"COSEND",arch_name,bw_str,f,CSV_NOHEADER);		
 		statcounters_dump(&result);
 		
 		while(!pthread_mutex_unlock(&output_lock));
@@ -378,7 +361,7 @@ void receive_data(void)
 			sprintf(name2,"/root/COCHANNEL_wholeop_b%lu_t%lu.dat",message_len,total_size);
 			if (buffer==NULL)
 				buffer=calloc(4096,sizeof(char));
-			else if (cheri_getlen(buffer)<4096)
+			else if (cheri_getlen(buffer)<4096 || (cheri_getperm(buffer)&(CHERI_PERM_STORE))==0)
 				buffer=calloc(4096,sizeof(char));
 			else
 				break;
@@ -387,9 +370,9 @@ void receive_data(void)
 		case COPIPE:
 			sprintf(name,"/root/COPIPE_corecv_b%lu_t%lu.dat",message_len,total_size);
 			sprintf(name,"/root/COPIPE_wholeop_b%lu_t%lu.dat",message_len,total_size);
-			if (buffer==NULL)
+			if (buffer==NULL || (cheri_getperm(buffer)&(CHERI_PERM_STORE))==0)
 				buffer=calloc(message_len,sizeof(char));
-			else if (cheri_getlen(buffer)<message_len)
+			else if (cheri_getlen(buffer)<message_len || (cheri_getperm(buffer)&(CHERI_PERM_STORE))==0)
 				buffer=calloc(message_len,sizeof(char));
 			else
 				break;
@@ -399,7 +382,7 @@ void receive_data(void)
 			sprintf(name,"/root/COCARRIER_corecv_b%lu_t%lu.dat",message_len,total_size);
 			if (buffer==NULL)
 				buffer=calloc(message_len,sizeof(char));
-			else if (cheri_getlen(buffer)<message_len)
+			else if (cheri_getlen(buffer)<message_len || (cheri_getperm(buffer)&(CHERI_PERM_STORE))==0)
 				buffer=calloc(message_len,sizeof(char));
 			else
 				break;
@@ -438,20 +421,20 @@ void receive_data(void)
 	f2 = fopen(name,"a+");
 	if(coport_type==COPIPE && 0)
 		set_sched();
+	status=coopen(port_name,coport_type,&port);
 	for(unsigned long i = 0; i<runs; i++)
 	{
-
-		status=coopen(port_name,coport_type,&port);
-		
 		statcounters_zero(&bank1);
 		statcounters_zero(&recv_end);
-
 		statcounters_zero(&result);
 
 		if(coport_type!=COPIPE)
 		{
-			while(pthread_mutex_trylock(&async_lock))
-				sched_yield();
+			if(coport_type==COCARRIER ||1)
+			{
+				while(pthread_mutex_trylock(&async_lock))
+					sched_yield();
+			}
 			error=pthread_mutex_lock(&output_lock); //keep it quiet during
 			if(error)
 				err(error,"recv_data: lock output_lock failed");
@@ -459,18 +442,7 @@ void receive_data(void)
 		
 		if (coport_type==COCHANNEL)
 		{
-			for(unsigned int j = 0; j<(total_size/4096); j++)
-			{
-				status=corecv(port,(void **)&buffer,4096);
-				if(status==-1)
-					sched_yield();
-				else if(remaining_len<4096 || status==0)
-					break;		
-				else
-					remaining_len-=4096;
-				
-
-			}
+			status=corecv(port,(void **)&buffer,MIN(remaining_len,4096));
 		}
 		else
 		{
@@ -484,16 +456,7 @@ void receive_data(void)
 		statcounters_sample(&bank1);
 		if (coport_type==COCHANNEL)
 		{
-			for(unsigned int j = 0; j<(total_size/4096); j++)
-			{
-				status=corecv(port,(void **)&buffer,MIN(remaining_len,4096));
-				if(status==-1)
-					sched_yield();
-				else if(remaining_len<4096 || status==0)
-					break;		
-				else
-					remaining_len-=4096;
-			}
+			status=corecv(port,(void **)&buffer,MIN(remaining_len,4096));
 		}
 		else
 		{
@@ -502,12 +465,12 @@ void receive_data(void)
 				status=corecv(port,(void **)&buffer,message_len);
 			}
 		}
-		statcounters_sample_end(&recv_end);
+		statcounters_sample_end(&recv_end);	
 		clock_gettime(CLOCK_REALTIME,&end_timestamp);
 
 		if(coport_type!=COPIPE)
 		{
-			while(pthread_mutex_unlock(&async_lock));
+			while(!pthread_mutex_unlock(&async_lock));
 		}
 		sched_yield();
 		error=pthread_mutex_lock(&output_lock);
@@ -529,7 +492,7 @@ void receive_data(void)
 		statcounters_diff(&result,&recv_end,&bank1);
 		
 		ipc_time=(float)end_timestamp.tv_sec + (float)end_timestamp.tv_nsec / 1000000000;
-		printf("Received %lu bytes in %lf\n", total_size, ipc_time);
+		printf("Received %lu bytes in %fs\n", total_size, ipc_time);
 		//printf("Received %lu bytes\n", total_size);
 
 
@@ -538,9 +501,9 @@ void receive_data(void)
 		sprintf(bw_str,"%.2FKB/s\n",(((total_size)/ipc_time)/1024.0));
 
 		if(i==0)
-			statcounters_dump_with_args(&result,"CORECV",bw_str,arch_name,f,CSV_HEADER);
+			statcounters_dump_with_args(&result,"CORECV",arch_name,bw_str,f,CSV_HEADER);
 		else
-			statcounters_dump_with_args(&result,"CORECV",bw_str,arch_name,f,CSV_NOHEADER);
+			statcounters_dump_with_args(&result,"CORECV",arch_name,bw_str,f,CSV_NOHEADER);
 		statcounters_dump(&result);
 		if (coport_type!=COPIPE)
 		{
@@ -550,9 +513,9 @@ void receive_data(void)
 		
 		statcounters_diff(&result,&recv_end,&send_start);
 		if(i==0)
-			statcounters_dump_with_args(&result,"CORECV","",arch_name,f2,CSV_HEADER);
+			statcounters_dump_with_args(&result,"CORECV",arch_name,bw_str,f2,CSV_HEADER);
 		else
-			statcounters_dump_with_args(&result,"CORECV","",arch_name,f2,CSV_NOHEADER);
+			statcounters_dump_with_args(&result,"CORECV",arch_name,bw_str,f2,CSV_NOHEADER);
 	
 		while(!pthread_mutex_unlock(&output_lock));
 		sched_yield();
@@ -577,6 +540,7 @@ void receive_data(void)
 	if(coport_type!=COPIPE)
 		while(!pthread_mutex_unlock(&async_lock));
 	port=NULL;
+	may_start=0;
 }	
 
 static
@@ -631,21 +595,30 @@ void *do_send(void* args)
 	may_start++;
 	
 	send_data();
+
+	while(may_start)
+		sched_yield();
 	switching_types++;
 	strcpy(port_name,port_names[1]);
 	coport_type=COCARRIER;
 
 	may_start++;
-	
 	send_data();
-	switching_types++;
-	strcpy(port_name,port_names[2]);
-	coport_type=COCHANNEL;
+	if(message_len<=4096)
+	{
+		while(!pthread_mutex_unlock(&async_lock));
+		switching_types++;
 
-	may_start++;
-	
-	send_data();
-	while(!pthread_mutex_unlock(&async_lock));
+		while(may_start)
+			sched_yield();
+		strcpy(port_name,port_names[2]);
+		coport_type=COCHANNEL;
+
+		may_start++;
+		pthread_mutex_lock(&async_lock);
+		send_data();
+
+	}
 	done++;	
 	for(;;)
 		sched_yield();
@@ -660,8 +633,11 @@ void *do_recv(void* args)
 	receive_data();
 	switching_types++;
 	receive_data();
-	switching_types++;
-	receive_data();
+	if(message_len<=4096)
+	{
+		switching_types++;
+		receive_data();
+	}
 	done++;
 	pthread_mutex_lock(&output_lock);
 	exit(0);

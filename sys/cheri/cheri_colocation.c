@@ -90,6 +90,22 @@ colocation_startup(void)
 SYSINIT(colocation_startup, SI_SUB_CPU, SI_ORDER_FIRST, colocation_startup,
     NULL);
 
+void
+colocation_cleanup(struct thread *td)
+{
+	td->td_md.md_scb = 0;
+
+	/*
+	 * XXX: This should be only neccessary with INVARIANTS.
+	 */
+	memset(&td->td_md.md_slow_cv, 0, sizeof(struct cv));
+	memset(&td->td_md.md_slow_lock, 0, sizeof(struct sx));
+	td->td_md.md_slow_caller_td = NULL;
+	td->td_md.md_slow_buf = NULL;
+	td->td_md.md_slow_len = 0;
+	td->td_md.md_slow_accepting = false;
+}
+
 static bool
 colocation_fetch_scb(struct thread *td, struct switchercb *scbp)
 {
@@ -337,6 +353,33 @@ colocation_trap_in_switcher(struct thread *td, struct trapframe *trapframe)
 	return (false);
 }
 
+void
+colocation_update_tls(struct thread *td)
+{
+	vaddr_t addr;
+	struct switchercb scb;
+	int error;
+
+	addr = td->td_md.md_scb;
+	if (addr == 0) {
+		/*
+		 * We've never called cosetup(2).
+		 */
+		return;
+	}
+
+	error = copyincap(___USER_CFROMPTR((const void *)addr, userspace_cap), &scb, sizeof(scb));
+	KASSERT(error == 0, ("%s: copyincap from %p failed with error %d\n", __func__, (void *)addr, error));
+
+	COLOCATION_DEBUG("changing TLS from %p to %p",
+	    (__cheri_fromcap void *)scb.scb_tls,
+	    (__cheri_fromcap void *)((char * __capability)td->td_md.md_tls + td->td_md.md_tls_tcb_offset));
+	scb.scb_tls = (char * __capability)td->td_md.md_tls + td->td_md.md_tls_tcb_offset;
+
+	error = copyoutcap(&scb, ___USER_CFROMPTR((void *)addr, userspace_cap), sizeof(scb));
+	KASSERT(error == 0, ("%s: copyoutcap from %p failed with error %d\n", __func__, (void *)addr, error));
+}
+
 /*
  * Setup the per-thread switcher control block.
  */
@@ -386,6 +429,7 @@ setup_scb(struct thread *td)
 	scb.scb_td = td;
 	scb.scb_borrower_td = NULL;
 	scb.scb_peer_scb = NULL;
+	scb.scb_tls = (char * __capability)td->td_md.md_tls + td->td_md.md_tls_tcb_offset;
 
 	error = copyoutcap(&scb,
 	    ___USER_CFROMPTR((void *)addr, userspace_cap), sizeof(scb));
@@ -488,7 +532,7 @@ kern_coregister(struct thread *td, const char * __capability namep,
 
 	vmspace = td->td_proc->p_vmspace;
 
-	error = copyinstr_c(namep, name, sizeof(name), NULL);
+	error = copyinstr(namep, name, sizeof(name), NULL);
 	if (error != 0)
 		return (error);
 
@@ -562,7 +606,7 @@ kern_colookup(struct thread *td, const char * __capability namep,
 
 	vmspace = td->td_proc->p_vmspace;
 
-	error = copyinstr_c(namep, name, sizeof(name), NULL);
+	error = copyinstr(namep, name, sizeof(name), NULL);
 	if (error != 0)
 		return (error);
 
@@ -675,7 +719,7 @@ kern_cocall_slow(void * __capability code, void * __capability data,
 		md->md_slow_len = len;
 		md->md_slow_buf = malloc(len, M_TEMP, M_WAITOK);
 
-		error = copyin_c(buf, md->md_slow_buf, len);
+		error = copyin(buf, md->md_slow_buf, len);
 		if (error != 0) {
 			COLOCATION_DEBUG("copyin failed with error %d", error);
 			goto out;
@@ -730,7 +774,7 @@ kern_cocall_slow(void * __capability code, void * __capability data,
 		if (len > md->md_slow_len)
 			len = md->md_slow_len;
 		if (len > 0) {
-			error = copyout_c(md->md_slow_buf, buf, len);
+			error = copyout(md->md_slow_buf, buf, len);
 			if (error != 0)
 				COLOCATION_DEBUG("copyout failed with error %d", error);
 		}
@@ -792,7 +836,7 @@ kern_coaccept_slow(void * __capability code, void * __capability data,
 		if (buf != NULL) {
 			minlen = MIN(len, callermd->md_slow_len);
 			if (minlen > 0) {
-				error = copyin_c(buf, callermd->md_slow_buf, minlen);
+				error = copyin(buf, callermd->md_slow_buf, minlen);
 				if (error != 0) {
 					COLOCATION_DEBUG("copyin failed with error %d", error);
 					return (error);
@@ -827,7 +871,7 @@ kern_coaccept_slow(void * __capability code, void * __capability data,
 	if (buf != NULL) {
 		minlen = MIN(len, callermd->md_slow_len);
 		if (minlen > 0) {
-			error = copyout_c(callermd->md_slow_buf, buf, len);
+			error = copyout(callermd->md_slow_buf, buf, len);
 			if (error != 0)
 				COLOCATION_DEBUG("copyout failed with error %d", error);
 		}
@@ -852,6 +896,7 @@ db_print_scb(struct switchercb *scb)
 	db_printf("    scb_peer_scb:	%p\n", (__cheri_fromcap void *)scb->scb_peer_scb);
 	db_printf("    scb_td:		%p\n", scb->scb_td);
 	db_printf("    scb_borrower_td:	%p\n", scb->scb_borrower_td);
+	db_printf("    scb_tls:		%p\n", (__cheri_fromcap void *)scb->scb_tls);
 }
 
 void

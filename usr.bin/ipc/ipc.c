@@ -50,6 +50,10 @@
 #ifdef WITH_QTRACE
 #include <cheri/cheri.h>
 #endif
+#ifdef WITH_RUSAGE
+#include <sys/resource.h>
+#include <stdbool.h>
+#endif 
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -354,6 +358,200 @@ benchmark_pmc_to_string(int type)
 }
 #endif
 
+#ifdef WITH_RUSAGE
+static void
+timevalfix(struct timeval *t1)
+{
+
+	if (t1->tv_usec < 0) {
+		t1->tv_sec--;
+		t1->tv_usec += 1000000;
+	}
+	if (t1->tv_usec >= 1000000) {
+		t1->tv_sec++;
+		t1->tv_usec -= 1000000;
+	}
+}
+
+static 
+void
+timevalsub(struct timeval *t1, const struct timeval *t2)
+{
+
+	t1->tv_sec -= t2->tv_sec;
+	t1->tv_usec -= t2->tv_usec;
+	timevalfix(t1);
+}
+
+static 
+void rusage_diff(struct rusage *dest,struct rusage *end,struct rusage *start)
+{
+	dest->ru_utime=end->ru_utime;
+	timevalsub(&dest->ru_utime,&start->ru_utime);	/* user time used */
+	dest->ru_stime=end->ru_stime;
+	timevalsub(&dest->ru_stime,&start->ru_stime);	/* system time used */
+
+	dest->ru_maxrss=end->ru_maxrss-start->ru_maxrss;		/* max resident set size */
+	dest->ru_ixrss=end->ru_ixrss-start->ru_ixrss;		/* integral shared memory size */
+	dest->ru_idrss=end->ru_idrss-start->ru_idrss;		/* integral unshared data " */
+	dest->ru_isrss=end->ru_isrss-start->ru_isrss;		/* integral unshared stack " */
+	dest->ru_minflt=end->ru_minflt-start->ru_minflt;		/* page reclaims */
+	dest->ru_majflt=end->ru_majflt-start->ru_majflt;		/* page faults */
+	dest->ru_nswap=end->ru_nswap-start->ru_nswap;		/* swaps */
+	dest->ru_inblock=end->ru_inblock-start->ru_inblock;		/* block input operations */
+	dest->ru_oublock=end->ru_oublock-start->ru_oublock;		/* block output operations */
+	dest->ru_msgsnd=end->ru_msgsnd-start->ru_msgsnd;		/* messages sent */
+	dest->ru_msgrcv=end->ru_msgrcv-start->ru_msgrcv;		/* messages received */
+	dest->ru_nsignals=end->ru_nsignals-start->ru_nsignals;		/* signals received */
+	dest->ru_nvcsw=end->ru_nvcsw-start->ru_nvcsw;		/* voluntary context switches */
+	dest->ru_nivcsw=end->ru_nivcsw-start->ru_nivcsw;		/* involuntary " */
+}
+
+static
+int rusage_dump_with_args (
+    const struct rusage * const b,
+    const char * progname,
+    const char * phase,
+    const char * archname,
+    FILE * const fileptr,
+    const statcounters_fmt_flag_t format_flag)
+{
+    // preparing default values for NULL arguments
+    // displayed progname
+#define MAX_NAME_SIZE 512
+    if (!progname) {
+        progname = getenv("STATCOUNTERS_PROGNAME");
+        if (!progname || progname[0] == '\0')
+	    progname = getprogname();
+    }
+    size_t pname_s = strnlen(progname,MAX_NAME_SIZE);
+    size_t phase_s = 0;
+    if (phase) {
+        phase_s = strnlen(phase,MAX_NAME_SIZE);
+    }
+    char * pname = malloc((sizeof(char) * (pname_s + phase_s)) + 1);
+    strncpy(pname, progname, pname_s + 1);
+    if (phase) {
+        strncat(pname, phase, phase_s);
+    }
+    // displayed archname
+    const char * aname;
+    if (!archname) {
+        aname = getenv("STATCOUNTERS_ARCHNAME");
+        if (!aname || aname[0] == '\0')
+            aname = "\0";
+    } else {
+        aname = archname;
+    }
+    // dump file pointer
+    bool display_header = true;
+    bool use_stdout = false;
+    FILE * fp = fileptr;
+    if (!fp) {
+        const char * const fname = getenv("STATCOUNTERS_OUTPUT");
+        if (!fname || fname[0] == '\0') {
+            use_stdout = true;
+        } else {
+            if (access(fname, F_OK) != -1) {
+                display_header = false;
+            }
+            fp = fopen(fname, "a");
+        }
+        if (!fp && !use_stdout) {
+            warn("Failed to open statcounters output %s", fname);
+            use_stdout = true;
+        }
+    } else {
+        use_stdout = false;
+    }
+    if (use_stdout)
+        fp = stdout;
+    // output format
+    const char * const fmt = getenv("STATCOUNTERS_FORMAT");
+    statcounters_fmt_flag_t fmt_flg = format_flag;
+    if (fmt && (strcmp(fmt,"csv") == 0)) {
+       if (display_header)
+           fmt_flg = CSV_HEADER;
+       else
+           fmt_flg = CSV_NOHEADER;
+    }
+
+    if (b == NULL || fp == NULL)
+        return -1;
+    switch (fmt_flg)
+    {
+        case CSV_HEADER:
+            fprintf(fp, "progname,");
+            fprintf(fp, "archname,");
+            fprintf(fp, "user_time,");
+            fprintf(fp, "sys_time,");
+            fprintf(fp, "max_resident_set_size,");
+            fprintf(fp, "integral_shared_memory_size,");
+            fprintf(fp, "integral_unshared_data,");
+            fprintf(fp, "integral_unshared_stack,");
+            fprintf(fp, "page_reclaims,");
+            fprintf(fp, "page_faults,");
+            fprintf(fp, "swaps,");
+            fprintf(fp, "block_input,");
+            fprintf(fp, "block_output,");
+            fprintf(fp, "messages_sent,");
+            fprintf(fp, "messages_received,");
+            fprintf(fp, "signals_received,");
+            fprintf(fp, "voluntary_context_switches,");
+            fprintf(fp, "involuntary_context_switches,");
+            fprintf(fp, "\n");
+            // fallthrough
+        case CSV_NOHEADER:
+            fprintf(fp, "%s,",pname);
+            fprintf(fp, "%s,",aname);
+            fprintf(fp, "%ld.%ld,",b->ru_utime.tv_sec,b->ru_utime.tv_usec);
+            fprintf(fp, "%ld.%ld,",b->ru_stime.tv_sec,b->ru_stime.tv_usec);
+            fprintf(fp, "%lu,",b->ru_maxrss);
+            fprintf(fp, "%lu,",b->ru_ixrss);
+            fprintf(fp, "%lu,",b->ru_idrss);
+            fprintf(fp, "%lu,",b->ru_isrss);
+            fprintf(fp, "%lu,",b->ru_minflt);
+            fprintf(fp, "%lu",b->ru_majflt);
+            fprintf(fp, "%lu,",b->ru_nswap);
+            fprintf(fp, "%lu,",b->ru_inblock);
+            fprintf(fp, "%lu,",b->ru_oublock);
+            fprintf(fp, "%lu,",b->ru_msgsnd);
+            fprintf(fp, "%lu,",b->ru_msgrcv);
+            fprintf(fp, "%lu",b->ru_nsignals);
+            fprintf(fp, "%lu,",b->ru_nvcsw);
+            fprintf(fp, "%lu",b->ru_nivcsw);
+            fprintf(fp, "\n");
+            break;
+        case HUMAN_READABLE:
+        default:
+            fprintf(fp, "===== %s -- %s =====\n",pname, aname);
+            fprintf(fp, "user_time:                       \t%ld.%ld\n",b->ru_utime.tv_sec,b->ru_utime.tv_usec);
+            fprintf(fp, "sys_time:                        \t%ld.%ld\n",b->ru_stime.tv_sec,b->ru_stime.tv_usec);
+            fprintf(fp, "max_resident_set_size:           \t%lu\n",b->ru_maxrss);
+            fprintf(fp, "integral_shared_memory_size:     \t%lu\n",b->ru_ixrss);
+            fprintf(fp, "integral_unshared_data:          \t%lu\n",b->ru_idrss);
+            fprintf(fp, "integral_unshared_stack:         \t%lu\n",b->ru_isrss);
+            fprintf(fp, "page_reclaims:                   \t%lu\n",b->ru_minflt);
+            fprintf(fp, "page_faults:                     \t%lu\n",b->ru_majflt);
+            fprintf(fp, "swaps:                           \t%lu\n",b->ru_nswap);
+            fprintf(fp, "block_input:                     \t%lu\n",b->ru_inblock);
+            fprintf(fp, "block_output:                    \t%lu\n",b->ru_oublock);
+            fprintf(fp, "messages_sent:                   \t%lu\n",b->ru_msgsnd);
+            fprintf(fp, "messages_received:               \t%lu\n",b->ru_msgrcv);
+            fprintf(fp, "signals_received:                \t%lu\n",b->ru_nsignals);
+            fprintf(fp, "voluntary_context_switches:      \t%lu\n",b->ru_nvcsw);
+            fprintf(fp, "involuntary_context_switches:    \t%lu\n",b->ru_nivcsw);
+            fprintf(fp, "\n");
+            break;
+    }
+    free(pname);
+    //if (!use_stdout)
+    //    fclose(fp);
+    return 0;
+}
+
+static struct rusage rusage_start,rusage_end,rusage_result;
+#endif
 #ifdef WITH_STATCOUNTERS
 
 static cpuset_t recv_cpu_set = CPUSET_T_INITIALIZER(CPUSET_FSET);
@@ -506,6 +704,9 @@ sender(struct sender_argument *sap)
 	size_t len;
 	size_t write_sofar;
 
+#ifdef WITH_RUSAGE
+	getrusage(RUSAGE_THREAD,&rusage_start);
+#endif	
 	if (clock_gettime(CLOCK_REALTIME, &sap->sa_starttime) < 0)
 		err(EX_OSERR, "FAIL: clock_gettime");
 #ifdef WITH_PMC
@@ -539,6 +740,9 @@ sender(struct sender_argument *sap)
 #ifdef WITH_STATCOUNTERS
 	statcounters_sample_end(&send_end);
 #endif
+#ifdef WITH_RUSAGE
+	getrusage(RUSAGE_THREAD,&rusage_end);
+#endif	
 }
 
 static struct timespec
@@ -1086,12 +1290,15 @@ ipc(void)
 
 #ifdef WITH_STATCOUNTERS
 		char * bw_str = malloc(40);
+		char * rusage_name =  malloc(255);
+		sprintf(fname,"/tmp/%s_b%ld_t%ld_%s.dat",ipc_type_to_string(ipc_type),buffersize,totalsize,benchmark_mode_to_string(benchmark_mode));
+		sprintf(rusage_name,"/tmp/%s_b%ld_t%ld_%s_rusage.dat",ipc_type_to_string(ipc_type),buffersize,totalsize,benchmark_mode_to_string(benchmark_mode));
 
-		sprintf(fname,"/root/%s_b%ld_t%ld_%s.dat",ipc_type_to_string(ipc_type),buffersize,totalsize,benchmark_mode_to_string(benchmark_mode));
 		sprintf(bw_str,"%.2F",rate);
 		if (benchmark_statcounters && benchmark_mode!=BENCHMARK_MODE_2PROC)
 		{
 			statcounters_diff(&send_end, &send_end, &send_start);
+			rusage_diff(&rusage_result,&rusage_end,&rusage_start);
 			printf("\n");
 			printf("Sender Statcount:\n");
 			statcounters_dump(&send_end);
@@ -1107,6 +1314,20 @@ ipc(void)
 				statcounters_dump_with_args(&send_end,"ipc","",bw_str,f,CSV_HEADER);
 			}
 			fclose(f);
+			if((f= fopen(rusage_name,"r")))
+			{
+				fclose(f);
+				f= fopen(rusage_name,"a+");
+				rusage_dump_with_args(&rusage_result,"ipc","",bw_str,f,CSV_NOHEADER);
+			}
+			else
+			{
+				f= fopen(rusage_name,"a+");
+				rusage_dump_with_args(&rusage_result,"ipc","",bw_str,f,CSV_HEADER);
+			}
+			fclose(f);
+			rusage_dump_with_args(&rusage_result,"ipc","",bw_str,NULL,HUMAN_READABLE);
+
 			
 			if(benchmark_mode==BENCHMARK_MODE_2THREAD && ipc_type!=BENCHMARK_IPC_PIPE)
 			{

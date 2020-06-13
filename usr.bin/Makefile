@@ -202,6 +202,7 @@ SUBDIR+=	beri_count_stats
 SUBDIR+=ipc
 SUBDIR+=comesg_ukernel
 SUBDIR+=cochatter
+SUBDIR+=memcpy_bmark
 .endif
 # NB: keep these sorted by MK_* knobs
 

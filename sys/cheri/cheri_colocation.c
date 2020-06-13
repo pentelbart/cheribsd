@@ -262,6 +262,9 @@ colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 	struct syscall_args peersa;
 	trapf_pc_t peertpc;
 	bool have_scb, have_peer_scb;
+	vm_offset_t addr;
+	vm_map_t map;
+	vm_map_entry_t entry;
 
 	have_scb = colocation_fetch_scb(td, &scb);
 	if (!have_scb)
@@ -278,14 +281,36 @@ colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 	KASSERT(peertd != td,
 	    ("%s: peertd %p == td %p\n", __func__, peertd, td));
 	//are we in a cocall, or have we returned?
+	addr = (__cheri_addr vaddr_t)(*trapframep)->pc;
+	map = &td->td_proc->p_vmspace->vm_map;
+	vm_map_lock(map);
+	vm_map_lookup_entry(map, addr, &entry);
+	if (entry->owner==td->td_proc->p_pid || entry->owner==0)
+	{
+		vm_map_unlock(map);
+		return;
+	}
+	else
+		vm_map_unlock(map);
+	
 	if (scb.scb_peer_scb == NULL)
 	{
-		//allow swap-backs after cocall has returned
-		if(peerscb.scb_borrower_td != td && cheri_getaddress(peerscb.scb_peer_scb) != td->td_md.md_scb)
+		//we have returned, so this should be the last unborrow we do, if we do it.
+		scb.scb_borrower_td = NULL;
+		copyoutcap(&scb, ___USER_CFROMPTR((void *)td->td_md.md_scb, userspace_cap), sizeof(scb));
+		//allow swap-backs after cocall has returned, else ignore
+		addr = (__cheri_addr vaddr_t)(*trapframep)->pc;
+		map = &td->td_proc->p_vmspace->vm_map;
+		vm_map_lock(map);
+		vm_map_lookup_entry(map, addr, &entry);
+		if (entry->owner==td->td_proc->p_pid || entry->owner==0)
 		{
-			scb.scb_borrower_td = NULL;
+			vm_map_unlock(map);
 			return;
 		}
+		else
+			vm_map_unlock(map);
+		
 	}
 
 	KASSERT(peertd != td,
@@ -300,7 +325,14 @@ colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 	    peertd, peertd->td_proc->p_pid, peertd->td_proc->p_comm, peertd->td_md.md_scb,
 	    (__cheri_fromcap void *)peertd->td_md.md_tls, peertd->td_md.md_tls_tcb_offset,
 	    td->td_proc->p_sysent->sv_syscallnames[td->td_sa.code]);
-
+	COLOCATION_DEBUG("    scb.scb_peer_scb:	%p", (__cheri_fromcap void *)scb.scb_peer_scb);
+	COLOCATION_DEBUG("    scb.scb_td:		%p", scb.scb_td);
+	COLOCATION_DEBUG("    scb.scb_borrower_td:	%p", scb.scb_borrower_td);
+	COLOCATION_DEBUG("    scb.scb_tls:		%p", (__cheri_fromcap void *)scb.scb_tls);
+	COLOCATION_DEBUG("    peerscb.scb_peer_scb:	%p", (__cheri_fromcap void *)peerscb.scb_peer_scb);
+	COLOCATION_DEBUG("    peerscb.scb_td:		%p", peerscb.scb_td);
+	COLOCATION_DEBUG("    peerscb.scb_borrower_td:	%p", peerscb.scb_borrower_td);
+	COLOCATION_DEBUG("    peerscb.scb_tls:		%p", (__cheri_fromcap void *)peerscb.scb_tls);
 	/*
 	 * Assign our trapframe (userspace context) to the thread waiting
 	 * in copark(2) and wake it up; it'll return to userspace with ERESTART
@@ -326,7 +358,6 @@ colocation_unborrow(struct thread *td, struct trapframe **trapframep)
 	td->td_pcb->pcb_tpc = peertpc;
 
 	*trapframep = td->td_frame;
-
 	wakeup(&peertd->td_md.md_scb);
 
 	/*

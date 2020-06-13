@@ -245,8 +245,8 @@ _C_LABEL(switcher_coaccept):
 	/*
 	 * Zero out the scb_peer_scb variables, releasing the spinlock.
 	 */
-	csd	zero, zero, 0($c25);
-	csd	zero, zero, 0($idc);
+	csc	$cnull, zero, 0($c25);
+	csc	$cnull, zero, 0($idc);
 
 	clearlo		CLEARLO_BITS
 	clearhi		CLEARHI_BITS

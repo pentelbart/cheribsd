@@ -10,6 +10,7 @@
 #include <err.h>
 #include <errno.h>
 #include <sys/param.h>
+#include <cheri/cheric.h>
 
 static const char * one_k_str = "SIqfubhhJOVdGGMvw09vqHs7S8miUyi1JBaFNGbtKYy4vUs6QeB1JdrMAlWOcC5llzZ5XogADMOvIyNP9R0deF6Coi8RDsf1HUQFVZXYskgmUODJb0uB88DkY2h2qS1dMEX06tTaUWCTDOwRWt9qtgtD8OfBH0uKp6ABwt5vbCjchd7npp12jXBDdAzzkC81DOTdYGMsuuZ6iqMQt0CwkesUj4HSJ7exSaD5hQn47hpr2cinaATAlmfd8G1oKlYWCcXszmGAPkZm4qpE6lA51dTMNmR9kXvnONnMFWesrjI8XmA7qss71oSUgIu10WCnJ7YJA97lg40fCQ647lZCZKdsqGF7XZAgJEkAwSmZ7apdVK4zmlK8JXkdKCuecHxEJk3NDLdN83qvonYiJE7aoZHmibjwHMiJDAtmPKlaJBnKS5yLNXRExHLH5GXvjrvRIdDzCtQZStt4ZW8PickMMcDczSyP7Kr0OwjPaX3dSgU6PFRX3hKbYGyXx28VdzeAZ2ynvv1b5i13Hg9xW6oeidFVFw0SsuTg9gVmbYRr9F20LdDxGaJBMofsX6SbHx66JmtsgztP0DWAQxxviSRlUBi8fYvgxHqRfyYyGEFi5V1GMbPtpIKB6EZ2ixOt63VcXTK2egU4dzDcOlgognDz8253LFn0e02hNRX0nRRkamJ0xMkS9tzBW8NhdxG2iQ0zWbAyHzPWmFYQOvrXPm0u5yS2drByXmz5y9S8LvnBAZ1vlaLAylyMIxy8z6clpCIZqTovP3X0Eg6xPuLg4xQpXvxwx3U2WryMcDWRmAJWW7XL6JfzipyZTI9GGPiNp73Hs9CwSlQMpJDh9ByvzsWKmDKm3YUHLDwqe7XdmBbQfOkEKyjrQPr10TvNA0euXw0TTu6dmziZLSGrLv1DFLcuxzQ9CZkg1bkFX8RUzREjG8NmdGa0YLRdru2FWLqC1rCG6c3aD2qp2v0SuVUlJe9qj5aUsFjOlq5s9XGJJepCb6TTeHKP8jsHL7jnJQXIR9O0";
 static char * message_str;
@@ -169,7 +170,7 @@ int rusage_dump_with_args (
             fprintf(fp, "messages_received,");
             fprintf(fp, "signals_received,");
             fprintf(fp, "voluntary_context_switches,");
-            fprintf(fp, "involuntary_context_switches,");
+            fprintf(fp, "involuntary_context_switches");
             fprintf(fp, "\n");
             // fallthrough
         case CSV_NOHEADER:
@@ -182,13 +183,13 @@ int rusage_dump_with_args (
             fprintf(fp, "%lu,",b->ru_idrss);
             fprintf(fp, "%lu,",b->ru_isrss);
             fprintf(fp, "%lu,",b->ru_minflt);
-            fprintf(fp, "%lu",b->ru_majflt);
+            fprintf(fp, "%lu,",b->ru_majflt);
             fprintf(fp, "%lu,",b->ru_nswap);
             fprintf(fp, "%lu,",b->ru_inblock);
             fprintf(fp, "%lu,",b->ru_oublock);
             fprintf(fp, "%lu,",b->ru_msgsnd);
             fprintf(fp, "%lu,",b->ru_msgrcv);
-            fprintf(fp, "%lu",b->ru_nsignals);
+            fprintf(fp, "%lu,",b->ru_nsignals);
             fprintf(fp, "%lu,",b->ru_nvcsw);
             fprintf(fp, "%lu",b->ru_nivcsw);
             fprintf(fp, "\n");
@@ -252,7 +253,7 @@ void prepare_message(void)
 	}
 	message_str[message_len-1]='\0';
 }
-
+static int quiet = 0;
 int main(int argc, char * const argv[])
 {
 	int opt;
@@ -260,7 +261,7 @@ int main(int argc, char * const argv[])
 	char * buffer;
 	char * filename = malloc(255);
 	FILE *statfp, *rusagefp;
-	while((opt=getopt(argc,argv,"t:r:b:"))!=-1)
+	while((opt=getopt(argc,argv,"t:r:b:q"))!=-1)
 	{
 		switch(opt)
 		{
@@ -274,6 +275,9 @@ int main(int argc, char * const argv[])
 				if (*optarg == '\0' || *strptr != '\0' || runs <= 0)
 					err(1,"invalid runs");
 				break;
+            case 'q':
+                quiet = 1;
+                break;
 			default:
 				break;
 		}
@@ -294,9 +298,10 @@ int main(int argc, char * const argv[])
 	struct timespec start_timestamp,end_timestamp;
 	struct rusage start_rusage, end_rusage;
 	statcounters_bank_t end_bank,start_bank;
-	buffer=calloc(message_len,sizeof(char));
+	
 	for(size_t i = 0; i<runs; i++)
 	{
+        buffer=calloc(message_len,sizeof(char));
 		memcpy(buffer,message_str,message_len);
 		getrusage(RUSAGE_THREAD,&start_rusage);
 		clock_gettime(CLOCK_REALTIME,&start_timestamp);
@@ -322,7 +327,12 @@ int main(int argc, char * const argv[])
 
 		}
 		printf("Memcpy: %s\n",bw_str);
-		statcounters_dump(&end_bank);
-		rusage_dump_with_args(&end_rusage,"MEMCPY","beri",bw_str,NULL,HUMAN_READABLE);
+        if(!quiet)
+        {
+		  statcounters_dump(&end_bank);
+		  rusage_dump_with_args(&end_rusage,"MEMCPY","beri",bw_str,NULL,HUMAN_READABLE);
+        }
+        buffer=cheri_setoffset(buffer,0);
+        free(buffer);
 	}
 }

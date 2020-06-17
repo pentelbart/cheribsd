@@ -125,7 +125,7 @@ static size_t totalsize = TOTALSIZE;	/* total I/O size */
 
 #define	max(x, y)	((x) > (y) ? (x) : (y))
 #define	min(x, y)	((x) < (y) ? (x) : (y))
-
+static size_t runs = 1;
 #ifdef WITH_QTRACE
 static int qtrace = 0;
 #endif
@@ -498,7 +498,7 @@ int rusage_dump_with_args (
             fprintf(fp, "messages_received,");
             fprintf(fp, "signals_received,");
             fprintf(fp, "voluntary_context_switches,");
-            fprintf(fp, "involuntary_context_switches,");
+            fprintf(fp, "involuntary_context_switches");
             fprintf(fp, "\n");
             // fallthrough
         case CSV_NOHEADER:
@@ -511,13 +511,13 @@ int rusage_dump_with_args (
             fprintf(fp, "%lu,",b->ru_idrss);
             fprintf(fp, "%lu,",b->ru_isrss);
             fprintf(fp, "%lu,",b->ru_minflt);
-            fprintf(fp, "%lu",b->ru_majflt);
+            fprintf(fp, "%lu,",b->ru_majflt);
             fprintf(fp, "%lu,",b->ru_nswap);
             fprintf(fp, "%lu,",b->ru_inblock);
             fprintf(fp, "%lu,",b->ru_oublock);
             fprintf(fp, "%lu,",b->ru_msgsnd);
             fprintf(fp, "%lu,",b->ru_msgrcv);
-            fprintf(fp, "%lu",b->ru_nsignals);
+            fprintf(fp, "%lu,",b->ru_nsignals);
             fprintf(fp, "%lu,",b->ru_nvcsw);
             fprintf(fp, "%lu",b->ru_nivcsw);
             fprintf(fp, "\n");
@@ -731,6 +731,7 @@ sender(struct sender_argument *sap)
 		    min(buffersize, totalsize - write_sofar));
 		/*printf("write(%d, %zd, %zd) = %zd\n", sap->sa_writefd, 0, bytes_to_write, len);*/
 		if (len != bytes_to_write) {
+			perror("sender: error in write");
 			errx(EX_IOERR, "blocking write() returned early: %zd != %zd", len, bytes_to_write);
 		}
 		if (len < 0)
@@ -743,6 +744,7 @@ sender(struct sender_argument *sap)
 #ifdef WITH_RUSAGE
 	getrusage(RUSAGE_THREAD,&rusage_end);
 #endif	
+
 }
 
 static struct timespec
@@ -1014,7 +1016,7 @@ ipc(void)
 #ifdef WITH_STATCOUNTERS
 	CPU_CLR(CPU_FFS(&send_cpu_set)-1,&send_cpu_set);
 	CPU_CLR(CPU_FFS(&send_cpu_set)-1,&recv_cpu_set);
-	pthread_setaffinity_np(pthread_self(), sizeof(cpuset_t), &recv_cpu_set);
+	cpuset_setaffinity(CPU_LEVEL_ROOT,CPU_WHICH_TID,0, sizeof(cpuset_t), &recv_cpu_set);
 #endif
 
 	if (totalsize % buffersize != 0)
@@ -1197,6 +1199,7 @@ ipc(void)
 	 */
 	char * fname = malloc(100);
 	FILE* f;
+	
 	switch (benchmark_mode) {
 	case BENCHMARK_MODE_1THREAD:
 		ts = do_1thread(readfd, writefd, blockcount, readbuf,
@@ -1215,8 +1218,52 @@ ipc(void)
 
 	default:
 		assert(0);
+		
 	}
+	/* Seconds with fractional component. */
+	secs = (float)ts.tv_sec + (float)ts.tv_nsec / 1000000000;
+
+	/* Bytes/second. */
+	rate = totalsize / secs;
+
+	/* Kilobytes/second. */
+	rate /= (1024);
 	
+#ifdef WITH_STATCOUNTERS
+	char * bw_str = malloc(40);
+	char * rusage_name =  malloc(255);
+	sprintf(fname,"/tmp/%s_b%ld_t%ld_%s.dat",ipc_type_to_string(ipc_type),buffersize,totalsize,benchmark_mode_to_string(benchmark_mode));
+	sprintf(rusage_name,"/tmp/%s_b%ld_t%ld_%s_rusage.dat",ipc_type_to_string(ipc_type),buffersize,totalsize,benchmark_mode_to_string(benchmark_mode));
+
+	sprintf(bw_str,"%.2F",rate);
+
+	statcounters_diff(&send_end, &send_end, &send_start);
+	rusage_diff(&rusage_result,&rusage_end,&rusage_start);
+	if((f= fopen(fname,"r")))
+	{
+		fclose(f);
+		f= fopen(fname,"a+");
+		statcounters_dump_with_args(&send_end,"ipc","",bw_str,f,CSV_NOHEADER);
+	}
+	else
+	{
+		f= fopen(fname,"a+");
+		statcounters_dump_with_args(&send_end,"ipc","",bw_str,f,CSV_HEADER);
+	}
+	fclose(f);
+	if((f= fopen(rusage_name,"r")))
+	{
+		fclose(f);
+		f= fopen(rusage_name,"a+");
+		rusage_dump_with_args(&rusage_result,"ipc","",bw_str,f,CSV_NOHEADER);
+	}
+	else
+	{
+		f= fopen(rusage_name,"a+");
+		rusage_dump_with_args(&rusage_result,"ipc","",bw_str,f,CSV_HEADER);
+	}
+	fclose(f);
+#endif
 	/*
 	 * Now we can disruptively print things -- if we're not in quiet mode.
 	 */
@@ -1277,55 +1324,18 @@ ipc(void)
 		}
 #endif
 
-		/* Seconds with fractional component. */
-		secs = (float)ts.tv_sec + (float)ts.tv_nsec / 1000000000;
-
-		/* Bytes/second. */
-		rate = totalsize / secs;
-
-		/* Kilobytes/second. */
-		rate /= (1024);
+		
 
 		printf("%.2F KBytes/sec\n", rate);
 
 #ifdef WITH_STATCOUNTERS
-		char * bw_str = malloc(40);
-		char * rusage_name =  malloc(255);
-		sprintf(fname,"/tmp/%s_b%ld_t%ld_%s.dat",ipc_type_to_string(ipc_type),buffersize,totalsize,benchmark_mode_to_string(benchmark_mode));
-		sprintf(rusage_name,"/tmp/%s_b%ld_t%ld_%s_rusage.dat",ipc_type_to_string(ipc_type),buffersize,totalsize,benchmark_mode_to_string(benchmark_mode));
-
-		sprintf(bw_str,"%.2F",rate);
 		if (benchmark_statcounters && benchmark_mode!=BENCHMARK_MODE_2PROC)
 		{
-			statcounters_diff(&send_end, &send_end, &send_start);
-			rusage_diff(&rusage_result,&rusage_end,&rusage_start);
+			
 			printf("\n");
 			printf("Sender Statcount:\n");
 			statcounters_dump(&send_end);
-			if((f= fopen(fname,"r")))
-			{
-				fclose(f);
-				f= fopen(fname,"a+");
-				statcounters_dump_with_args(&send_end,"ipc","",bw_str,f,CSV_NOHEADER);
-			}
-			else
-			{
-				f= fopen(fname,"a+");
-				statcounters_dump_with_args(&send_end,"ipc","",bw_str,f,CSV_HEADER);
-			}
-			fclose(f);
-			if((f= fopen(rusage_name,"r")))
-			{
-				fclose(f);
-				f= fopen(rusage_name,"a+");
-				rusage_dump_with_args(&rusage_result,"ipc","",bw_str,f,CSV_NOHEADER);
-			}
-			else
-			{
-				f= fopen(rusage_name,"a+");
-				rusage_dump_with_args(&rusage_result,"ipc","",bw_str,f,CSV_HEADER);
-			}
-			fclose(f);
+			
 			rusage_dump_with_args(&rusage_result,"ipc","",bw_str,NULL,HUMAN_READABLE);
 
 			
@@ -1359,7 +1369,7 @@ main(int argc, char *argv[])
 
 	buffersize = BUFFERSIZE;
 	totalsize = TOTALSIZE;
-	while ((ch = getopt(argc, argv, "Bb:i:p:P:qst:vSQ"
+	while ((ch = getopt(argc, argv, "Bb:i:p:P:qst:vSQr:"
 #ifdef WITH_PMC
 	"P:"
 #endif
@@ -1368,24 +1378,38 @@ main(int argc, char *argv[])
 		case 'B':
 			Bflag++;
 			break;
-
+		case 'r':
+			runs = strtol(optarg, &endp, 10);
+			if (*optarg == '\0' || *endp != '\0' || runs <= 0)
+			{
+				printf("Invalid runs!\n");
+				usage();
+			}
+			break;
 		case 'b':
 			buffersize = strtol(optarg, &endp, 10);
-			if (*optarg == '\0' || *endp != '\0' || buffersize <= 0)
+			if (*optarg == '\0' || *endp != '\0' || buffersize <= 0) {
+				printf("Invalid buffer size!\n");
 				usage();
+			}
 			break;
 
 		case 'i':
 			ipc_type = ipc_type_from_string(optarg);
 			if (ipc_type == BENCHMARK_IPC_INVALID)
+			{
+				printf("Invalid IPC type!\n");
 				usage();
+			}
 			break;
 
 		case 'p':
 			l = strtol(optarg, &endp, 10);
 			if (*optarg == '\0' || *endp != '\0' ||
-			    l <= 0 || l > 65535)
+			    l <= 0 || l > 65535){
+				printf("Invalid port!\n");
 				usage();
+			}
 			tcp_port = l;
 			break;
 
@@ -1393,7 +1417,10 @@ main(int argc, char *argv[])
 		case 'P':
 			benchmark_pmc = benchmark_pmc_from_string(optarg);
 			if (benchmark_pmc == BENCHMARK_PMC_INVALID)
+			{
+				printf("Invalid PMCs!\n");
 				usage();
+			}
 			break;
 #endif
 
@@ -1418,7 +1445,10 @@ main(int argc, char *argv[])
 		case 't':
 			totalsize = strtol(optarg, &endp, 10);
 			if (*optarg == '\0' || *endp != '\0' || totalsize <= 0)
+			{
+				printf("Invalid totalsize!\n");
 				usage();
+			}
 			break;
 
 		case 'v':
@@ -1426,8 +1456,10 @@ main(int argc, char *argv[])
 			break;
 
 		case '?':
-		default:
+		default:{
+			printf("Default arg %c.\n",ch);
 			usage();
+		}
 		}
 	}
 	argc -= optind;
@@ -1438,8 +1470,10 @@ main(int argc, char *argv[])
 	 */
 	if (sflag && (ipc_type != BENCHMARK_IPC_LOCAL_SOCKET) &&
 	    (ipc_type != BENCHMARK_IPC_TCP_SOCKET))
-		usage();
-
+		{
+			printf("Socket buffer resizing is only permitted on sockets!\n");
+			usage();
+		}
 	/*
 	 * Exactly one of our operational modes, which will be specified as
 	 * the next (and only) mandatory argument.
@@ -1447,8 +1481,10 @@ main(int argc, char *argv[])
 	if (argc != 1)
 		usage();
 	benchmark_mode = benchmark_mode_from_string(argv[0]);
-	if (benchmark_mode == BENCHMARK_MODE_INVALID)
+	if (benchmark_mode == BENCHMARK_MODE_INVALID){
+		printf("Invalid mode!\n");
 		usage();
+	}
 	ipc();
 	exit(0);
 }

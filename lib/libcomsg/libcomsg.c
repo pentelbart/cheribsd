@@ -314,9 +314,9 @@ int cosend(const coport_t prt, const void * buf, size_t len)
                 perror("cosend: error in cocall");
             if(call.status==-1)
             {
-                warn("cosend: error occurred during cocarrier send\n");
                 errno=call.error;
-                retval=-call.status;
+                //warn("cosend: error occurred during cocarrier send\n");
+                retval=call.status;
             }
             else
             {

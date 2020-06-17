@@ -203,6 +203,9 @@ SUBDIR+=ipc
 SUBDIR+=comesg_ukernel
 SUBDIR+=cochatter
 SUBDIR+=memcpy_bmark
+SUBDIR+=cp_bmark
+SUBDIR+=ipc_bmark
+SUBDIR+=mc_bmark
 .endif
 # NB: keep these sorted by MK_* knobs
 

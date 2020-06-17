@@ -46,6 +46,8 @@
 #include <errno.h>
 #include <stdatomic.h>
 #include <pthread.h>
+#include <pthread_np.h>
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -57,6 +59,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/cpuset.h>
 
 #define DEBUG
 
@@ -67,7 +70,8 @@ long sealed_otype;
 pthread_mutex_t global_copoll_lock;
 pthread_cond_t global_cosend_cond;
 
-
+static cpuset_t recv_cpu_set = CPUSET_T_INITIALIZER(CPUSET_FSET);
+static cpuset_t send_cpu_set = CPUSET_T_INITIALIZER(CPUSET_FSET);
 
 _Atomic unsigned int next_port_index = 0;
 
@@ -290,8 +294,10 @@ void *cocarrier_recv(void *args)
             cocarrier_send_args->error=EAGAIN;
             continue;
         }
-        index=cocarrier->start++;
-        new_len=++cocarrier->length;
+        index=cocarrier->start;
+        cocarrier->start=(index+1)%COCARRIER_SIZE;
+        new_len=port_len-1;
+        cocarrier->length=new_len;
         if (new_len==0)
         {
         	cocarrier->event=((COPOLL_OUT | event) & ~(COPOLL_RERR | COPOLL_IN));
@@ -300,8 +306,8 @@ void *cocarrier_recv(void *args)
         {
             cocarrier->event=((COPOLL_OUT | event) & ~COPOLL_RERR);
         }
-        atomic_thread_fence(memory_order_release);
         cocarrier_send_args->message=cocarrier_buf[index];
+        atomic_thread_fence(memory_order_release);
         atomic_store_explicit(&cocarrier->status,COPORT_OPEN,memory_order_release);
 
         if(!LIST_EMPTY(&cocarrier->listeners))
@@ -391,8 +397,13 @@ void *cocarrier_send(void *args)
             cocarrier_send_args->error=EAGAIN;
             continue;
         }
-        index=++cocarrier->end;
-        new_len=++cocarrier->length;
+
+        index=(cocarrier->end);
+        cocarrier->end=(index+1)%COCARRIER_SIZE;
+        new_len=port_len+1;
+        cocarrier->length=new_len;
+
+#if 0
         if(cheri_gettag(cocarrier_buf[index]))
         {
         	//auto overwrite old messages once we've wrapped around
@@ -400,6 +411,7 @@ void *cocarrier_send(void *args)
             cocarrier_buf[index]=NULL;
             //this check is here so we can free these in future
         }
+#endif
         cocarrier_buf[index]=msg_buf;
 
         if(new_len==COCARRIER_SIZE)
@@ -407,7 +419,6 @@ void *cocarrier_send(void *args)
         else
             cocarrier->event=(COPOLL_IN | event) & ~COPOLL_WERR;
         atomic_thread_fence(memory_order_release);
-
         atomic_store_explicit(&cocarrier->status,COPORT_OPEN,memory_order_release);
 
         
@@ -420,6 +431,7 @@ void *cocarrier_send(void *args)
         cocarrier_send_args->status=cheri_getlen(msg_buf);
         cocarrier_send_args->error=0;
         msg_buf=NULL;
+
     }
     free(cocarrier_send_args);
     return 0;
@@ -544,6 +556,10 @@ int main(int argc, const char *argv[])
     printf("Starting memory manager...\n");
 
     pthread_attr_init(&thread_attrs);
+    CPU_CLR(CPU_FFS(&send_cpu_set)-1,&send_cpu_set);
+    CPU_CLR(CPU_FFS(&send_cpu_set)-1,&recv_cpu_set);
+   // pthread_attr_setaffinity_np(&thread_attrs, sizeof(cpuset_t), &recv_cpu_set);
+
     /*pthread_attr_setschedpolicy(&thread_attrs,SCHED_RR);
     struct sched_param sched_params;
     sched_params.sched_priority = sched_get_priority_max(SCHED_RR);
@@ -567,6 +583,8 @@ int main(int argc, const char *argv[])
     }
     pthread_mutexattr_t lock_attr;
     pthread_condattr_t cond_attr;
+
+
 
     pthread_mutexattr_init(&lock_attr);
     pthread_mutexattr_setpshared(&lock_attr,PTHREAD_PROCESS_PRIVATE);
